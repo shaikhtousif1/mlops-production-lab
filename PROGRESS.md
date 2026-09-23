@@ -8,6 +8,7 @@
 - Base image: Python 3.11
 - Docker Desktop + WSL2 integration working
 - MLflow: 3.16.1
+- Development workflow is intentionally host/container separated: the Dev Container is for development and MLOps workloads; GitHub authentication is handled from the host (currently WSL) rather than putting personal SSH credentials into the container.
 
 ### ML project
 - Project: Customer churn prediction
@@ -29,6 +30,9 @@
   - Model Registry = managed/versioned lifecycle for selected models
   - Run IDs and model versions are not the same thing
 - Understood that an older run (for example Run #34) can be registered later; registration does not require the latest run.
+- Tested GitHub SSH access from the Dev Container. The current Windows + WSL2 + Docker Desktop path does not automatically expose the WSL SSH agent to the container, so we are intentionally keeping Git operations on the WSL/macOS host rather than hardcoding an ephemeral SSH-agent socket into the project configuration.
+- WSL SSH agent is working with the existing GitHub key; no private key is copied into the Dev Container.
+- A local pre-sync Git stash remains as stash@{0} ("MLOps local work before sync"). It has not been popped; review/drop it only after confirming it contains no unique work.
 
 ### Next learning steps
 1. Run multiple experiments with a tunable hyperparameter (for example Logistic Regression C).
@@ -43,4 +47,4 @@
 10. Add retraining workflow.
 
 ## Working principle
-Learn by problem → pain → tool → implementation. Keep GitHub as the source of truth so the project can be resumed from another machine.
+Learn by problem → pain → tool → implementation. Keep GitHub as the source of truth so the project can be resumed from another machine. Keep developer credentials out of application containers unless there is a concrete need.
