@@ -7,6 +7,7 @@ venv/
 # MLflow local tracking/artifacts
 mlruns/
 mlartifacts/
+mlflow.db
 
 # OS / editor
 .DS_Store
