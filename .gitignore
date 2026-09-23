@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# MLflow local tracking/artifacts
+mlruns/
+mlartifacts/
+
+# OS / editor
+.DS_Store
+.vscode/
