@@ -1,6 +1,6 @@
 # MLOps Production Lab — Progress
 
-## Current checkpoint — 2026-09-24
+## Current checkpoint — 2026-09-25
 
 ### Career / learning direction
 
@@ -10,44 +10,40 @@ Target progression:
 - LLMOps
 - FDE
 
-The project is intentionally being built as a production-style MLOps lab rather than as a pure Data Science exercise. ML concepts are being learned deeply enough to understand the ML Engineer ↔ MLOps handoff, while the project will progressively shift toward automation, deployment, infrastructure, CI/CD, observability, and production operations.
+The project is intentionally being built as a production-style MLOps lab rather than as a pure Data Science exercise. ML concepts are being learned deeply enough to understand the ML Engineer ↔ MLOps handoff, while the project progressively shifts toward automation, deployment, infrastructure, CI/CD, observability, and production operations.
 
 ---
 
 ## Environment
 
-- GitHub repo: shaikhtousif1/mlops-production-lab
+- GitHub repo: `shaikhtousif1/mlops-production-lab`
 - Active development environment: VS Code Dev Container
 - Base image: Python 3.11
 - Docker Desktop + WSL2 integration working
 - MLflow: 3.16.1
+- Docker Compose: available on the WSL host
 - Development workflow is intentionally host/container separated:
-  - Dev Container → Python development, training, MLflow and MLOps workloads
-  - WSL/macOS host → GitHub authentication and Git operations
+  - Dev Container → Python development, training, MLflow client work and MLOps workloads
+  - WSL host → Docker Engine/Compose and GitHub operations
 - Personal SSH credentials are not copied into the Dev Container.
 
-### Current local architecture
+### Development architecture
 
-```
+```text
 Windows
   └── WSL2
        ├── Git / GitHub SSH
+       ├── Docker Engine
        └── Project repository
              ↕ bind mount
           Dev Container
-             ├── Python
+             ├── Python 3.11
              ├── scikit-learn
              ├── MLflow
              └── Training / selection code
 ```
 
-MLflow runs are **experiment runs**, not Docker containers. The current Dev Container is the runtime environment in which the training process and local MLflow UI/server run.
-
-Current local MLflow storage is file-based/local:
-- `mlflow.db`
-- MLflow artifact/run directories
-
-These are local development state and should not be committed to Git.
+MLflow runs are **experiment runs**, not Docker containers. One development environment can create many MLflow runs with different parameters.
 
 ---
 
@@ -67,7 +63,7 @@ This was useful for learning the mechanics, but it was not useful for meaningful
 
 Original dataset preserved as:
 
-```
+```text
 data/customers_v1.csv
 ```
 
@@ -75,28 +71,20 @@ data/customers_v1.csv
 
 Generated a new synthetic dataset:
 
-```
+```text
 data/customers.csv
 ```
 
 Characteristics:
 - 1,000 customer records
-- Features:
-  - age
-  - tenure_months
-  - monthly_charges
-  - support_tickets
-  - usage_hours
-- Target:
-  - churned
-- Class distribution:
-  - 524 non-churn
-  - 476 churn
-  - 47.6% churn rate
+- Features: `age`, `tenure_months`, `monthly_charges`, `support_tickets`, `usage_hours`
+- Target: `churned`
+- Class distribution: 524 non-churn / 476 churn
+- Churn rate: 47.6%
 
 Added reproducible dataset generator:
 
-```
+```text
 src/generate_data.py
 ```
 
@@ -104,17 +92,13 @@ The generator uses a fixed random seed (`42`) so the dataset can be recreated co
 
 ### Why the dataset was changed
 
-The original dataset made almost every model configuration look perfect. That prevented us from learning meaningful:
-- model comparison
-- error analysis
-- metric trade-offs
-- experiment selection
+The original dataset made almost every model configuration look perfect. That prevented meaningful learning around model comparison, error analysis, metric trade-offs and experiment selection.
 
 The new dataset introduces noise and class overlap so the evaluation pipeline produces realistic, imperfect results.
 
 ---
 
-# Training workflow
+# Training and evaluation workflow
 
 Current model:
 - scikit-learn Logistic Regression
@@ -124,18 +108,13 @@ Current model:
 - `random_state=42`
 - stratified split
 
-Run example:
+Example:
 
 ```bash
 python src/train.py --c 0.1
 ```
 
----
-
-# Model evaluation
-
-The training workflow now evaluates:
-
+The workflow evaluates:
 - Accuracy
 - Precision
 - Recall
@@ -147,28 +126,23 @@ The training workflow now evaluates:
 - 5-fold CV F1 standard deviation
 
 Important distinction:
-
 - `predict(X_test)` → hard 0/1 predictions used for accuracy, precision, recall, F1 and confusion matrix.
 - `predict_proba(X_test)[:, 1]` → class-1 probabilities used for ROC-AUC.
 
-A previous bug used probability output as the predictions array, causing a shape mismatch. This was corrected and reinforced the distinction between classification decisions and probability ranking.
+A previous bug used probability output as the predictions array, causing a shape mismatch. This was corrected.
 
 ---
 
 # MLflow experiment tracking
 
-MLflow tracks:
-
-### Parameters
-
+MLflow tracks parameters:
 - model_type
 - C
 - max_iter
 - test_size
 - random_state
 
-### Metrics
-
+Metrics:
 - accuracy
 - precision
 - recall
@@ -189,9 +163,7 @@ Added:
 mlflow.set_tag("dataset_version", "v2")
 ```
 
-This was necessary because the MLflow database contained historical runs from Dataset v1.
-
-Without filtering by dataset version, the model selector incorrectly selected an old Dataset v1 run with F1/precision/recall of 1.0.
+This was necessary because the MLflow database contained historical runs from Dataset v1. Without filtering by dataset version, the selector incorrectly selected an old Dataset v1 run with F1/precision/recall of 1.0.
 
 Lesson:
 
@@ -201,9 +173,9 @@ Lesson:
 
 # Hyperparameter experiment
 
-Tested five Logistic Regression `C` values:
+Tested Logistic Regression `C` values:
 
-```
+```text
 0.01
 0.1
 1
@@ -222,14 +194,10 @@ Approximate CV-F1 results:
 | 100 | 61.57% | 3.96% |
 
 Interpretation:
-
 - C=0.1 has the highest observed mean CV F1.
 - The difference is very small.
 - There is no strong evidence that C=0.1 is materially better than the other configurations.
 - The experiment demonstrates that the highest metric does not automatically imply a practically significant improvement.
-- Changing C is not a particularly powerful lever for this dataset/model combination.
-
-The current selected candidate is therefore a **policy-based selection**, not a claim of a statistically or practically significant superiority.
 
 ---
 
@@ -237,15 +205,14 @@ The current selected candidate is therefore a **policy-based selection**, not a 
 
 Added:
 
-```
+```text
 src/select_model.py
 ```
 
 The selector:
-
 1. Filters to `dataset_version=v2`.
 2. Ignores incomplete runs without CV F1.
-3. Selects using the following hierarchy:
+3. Selects using the hierarchy:
    1. Highest mean CV F1
    2. Lowest CV F1 standard deviation
    3. Highest recall
@@ -253,7 +220,7 @@ The selector:
 
 Current selected candidate:
 
-```
+```text
 Run ID: c6036648639745789ae51a102a8b5e0a
 C: 0.1
 Mean CV F1: 0.6187
@@ -263,13 +230,15 @@ Recall: 0.6211
 Precision: 0.6277
 ```
 
+The selector is a deterministic policy. It does not imply that C=0.1 is statistically or practically superior given the very small metric differences.
+
 ### Why selection was changed
 
 Initially the selector used final test-set F1. We changed this because repeatedly selecting/tuning models against the final test set can turn the test set into an implicit tuning dataset.
 
 Current conceptual flow:
 
-```
+```text
 Training data
     ↓
 5-fold cross-validation
@@ -281,16 +250,182 @@ Model selection
 Final test-set evaluation
 ```
 
-The final test set is therefore treated as a final evaluation rather than the primary tuning mechanism.
+The final test set is treated as final evaluation rather than the primary tuning mechanism.
+
+---
+
+# Model Registry and serving
+
+The selected model was registered earlier as:
+
+```text
+customer-churn-model
+Version: 1
+```
+
+A prediction script was added and successfully loaded:
+
+```text
+models:/customer-churn-model/1
+```
+
+Example prediction returned churn class `1` for a sample customer.
+
+A FastAPI inference service was then added in `src/api.py` with:
+- `GET /` health endpoint
+- `POST /predict` inference endpoint
+- configurable `MLFLOW_TRACKING_URI`
+- configurable `MODEL_URI`
+- MLflow model loading via `mlflow.pyfunc.load_model`
+
+Swagger/OpenAPI was used to test the API interactively.
+
+---
+
+# Containerization
+
+The inference service was containerized using the root `Dockerfile`.
+
+The API image contains the application dependencies from `requirements.txt`, including:
+- pandas
+- scikit-learn
+- MLflow 3.16.1
+- FastAPI
+- Uvicorn
+
+The MLflow server gets a separate image under:
+
+```text
+mlflow/Dockerfile
+```
+
+It extends the MLflow 3.16.1 image and installs:
+- `psycopg2-binary` for PostgreSQL connectivity
+- `boto3` for future S3 artifact storage
+
+---
+
+# Docker Compose production-style architecture
+
+A Docker Compose stack was introduced to move beyond the original single-container/dev-container setup.
+
+Current services:
+
+```text
+                    Docker Compose
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+        ▼                ▼                ▼
+   PostgreSQL          MLflow          FastAPI
+     :5432              :5000            :8000
+        │                │                │
+        │                ├── Tracking     │
+        │                ├── Registry     │
+        │                └── Artifacts    │
+        │                                 │
+        └─────────────────────────────────┘
+```
+
+Current Compose services:
+- `postgres` → persistent MLflow backend metadata and registry
+- `mlflow` → tracking server and model registry
+- `api` → model inference service
+
+Persistent Docker volumes:
+- `postgres_data`
+- `mlflow_artifacts`
+
+The current MLflow server uses PostgreSQL as the backend store and a Docker volume for artifacts.
+
+### Why PostgreSQL was introduced
+
+The original development setup used local SQLite/file-based MLflow state. That is appropriate for learning and local experimentation but does not represent the shared-server architecture normally used by a team.
+
+The new stack separates:
+
+```text
+PostgreSQL
+    ↓
+MLflow metadata / experiments / registry
+
+MLflow artifact volume
+    ↓
+Model artifacts
+```
+
+This separation is an important MLOps architecture concept.
+
+### LocalStack/MinIO detour
+
+We initially attempted to introduce MinIO and then LocalStack as local S3-compatible storage. Both introduced registry/licensing/image availability issues in the current environment. Rather than spending learning time on tool-specific plumbing, the stack was simplified to a persistent MLflow artifact volume.
+
+The intended production evolution remains:
+
+```text
+Local artifact volume
+        ↓
+S3-compatible object storage
+        ↓
+AWS S3 in production
+```
+
+The MLflow Docker image already includes `boto3` so the later S3 transition is straightforward.
+
+---
+
+# Docker Compose concepts learned
+
+Important distinction:
+
+### Dockerfile
+Defines how to build one image.
+
+Example:
+
+```text
+Dockerfile
+   ↓
+customer-churn-api image
+```
+
+### Docker Compose
+Defines how multiple containers/services work together.
+
+Example:
+
+```text
+compose
+ ├── PostgreSQL
+ ├── MLflow
+ └── FastAPI
+```
+
+### `depends_on`
+Controls startup ordering/conditions. PostgreSQL is marked healthy before MLflow starts.
+
+### Volumes
+Persist state outside the disposable container filesystem.
+
+```text
+postgres_data
+mlflow_artifacts
+```
+
+### Container networking
+Compose gives services a shared network, so the API can reach MLflow using:
+
+```text
+http://mlflow:5000
+```
+
+rather than `localhost`.
 
 ---
 
 # ML Engineer vs MLOps distinction learned
 
-A key discussion during this phase was that much of the manual model experimentation is primarily ML Engineer/Data Scientist work.
-
 ### ML Engineer typically owns
-
 - Feature engineering
 - Model selection strategy
 - Model architecture
@@ -300,7 +435,6 @@ A key discussion during this phase was that much of the manual model experimenta
 - Model quality requirements
 
 ### MLOps typically owns/enables
-
 - Reproducible training execution
 - Experiment tracking infrastructure
 - Model Registry
@@ -314,9 +448,7 @@ A key discussion during this phase was that much of the manual model experimenta
 - Retraining workflows
 - Promotion/rollback automation
 
-The project intentionally performed enough ML work to understand this boundary.
-
-The next phase should shift the emphasis toward the MLOps side.
+The project intentionally performed enough ML work to understand this boundary. The next phase should increasingly emphasize the MLOps side.
 
 ---
 
@@ -324,13 +456,11 @@ The next phase should shift the emphasis toward the MLOps side.
 
 ## 1. Experiment runs are not containers
 
-An MLflow run represents one execution of an experiment.
+An MLflow run represents one execution of an experiment. A Docker/Dev Container is the runtime environment.
 
-A Docker/Dev Container is the runtime environment.
+One environment can produce many MLflow runs:
 
-One Dev Container can produce many MLflow runs:
-
-```
+```text
 Dev Container
   ├── MLflow Run: C=0.01
   ├── MLflow Run: C=0.1
@@ -345,19 +475,11 @@ A model trained on Dataset v1 should not automatically be compared with a model 
 
 ## 3. Metric precision is not practical significance
 
-For example:
-
-- 61.87% vs 61.61% CV F1
-
-is a difference of only 0.26 percentage points.
-
-The pipeline can select one model deterministically without claiming that the difference is meaningful.
+61.87% vs 61.61% CV F1 is only 0.26 percentage points. A deterministic selector can choose one model without claiming that the difference is meaningful.
 
 ## 4. Model selection needs a predefined policy
 
-We defined the selection policy before using it:
-
-```
+```text
 Mean CV F1
     ↓
 CV F1 stability
@@ -367,11 +489,48 @@ Recall
 Precision
 ```
 
-This makes the selection reproducible and auditable.
+This makes selection reproducible and auditable.
 
 ## 5. Test-set results should be treated carefully
 
-The test set should provide the final evaluation rather than becoming a repeatedly tuned decision mechanism.
+The test set should provide final evaluation rather than becoming a repeatedly tuned decision mechanism.
+
+## 6. Containers are not persistence
+
+Containers are replaceable runtime units. Persistent state belongs in databases, object storage, or volumes designed for persistence.
+
+## 7. Service health matters more than `compose up` returning success
+
+A Compose deployment can create containers while one or more services immediately exit. Always validate with:
+
+```bash
+docker compose ps -a
+docker compose logs <service>
+```
+
+## 8. Production architecture is an evolution, not a single tool
+
+The current stack is intentionally moving through layers:
+
+```text
+Python training
+   ↓
+MLflow tracking
+   ↓
+Model Registry
+   ↓
+FastAPI
+   ↓
+Docker
+   ↓
+Docker Compose
+   ↓
+Kubernetes
+   ↓
+CI/CD + GitOps
+   ↓
+Monitoring + retraining
+```
 
 ---
 
@@ -379,79 +538,108 @@ The test set should provide the final evaluation rather than becoming a repeated
 
 Latest pushed commit:
 
-```
-2627bd0
-Improve model evaluation and selection
+```text
+42826525533a18aa6cd51338e07bc3e73b0be2b8
+Build containerized MLOps serving stack
 ```
 
-Remote branch:
-- `main`
-- Successfully pushed to GitHub.
+Previous important checkpoints:
 
-Files included in the latest commit:
+```text
+2627bd0  Improve model evaluation and selection
+af962ec  Update MLOps learning progress
+4977a38  Add configurable experiments and cross-validation
+7a84edf  Add churn training and MLflow tracking
+ee87ec1  Add development container
+```
 
-```
-data/customers.csv
-data/customers_v1.csv
-src/generate_data.py
-src/select_model.py
-src/train.py
-tmp/check_mlflow.py
-```
+The latest repository contains the containerized MLOps serving stack, Compose configuration, MLflow PostgreSQL integration, and API configuration.
 
 ### Cleanup item
 
-`tmp/check_mlflow.py` was a temporary inspection script and should be removed in the next cleanup commit.
+`tmp/check_mlflow.py` was a temporary inspection script and should be removed in a later cleanup commit.
 
-Also verify that generated MLflow state such as:
+Generated state remains excluded from Git:
 
-```
+```text
 mlflow.db
 mlruns/
 mlartifacts/
 ```
 
-is excluded by `.gitignore` and is not committed.
+Do not reset/amend historical checkpoints just for cleanup; handle cleanup as a separate commit.
 
-Do not amend/reset the current checkpoint just for this cleanup; handle it as a separate cleanup commit.
+---
+
+# Current status — end of 2026-09-25 session
+
+### Completed
+
+- [x] Development container
+- [x] Synthetic churn dataset v2
+- [x] Reproducible data generation
+- [x] Logistic Regression training
+- [x] Cross-validation
+- [x] Evaluation metrics
+- [x] Dataset lineage tag
+- [x] Model comparison
+- [x] Deterministic model selection
+- [x] MLflow Model Registry introduction
+- [x] Prediction script
+- [x] FastAPI inference API
+- [x] Swagger/OpenAPI testing
+- [x] API Docker image
+- [x] MLflow Docker image with PostgreSQL driver
+- [x] Docker Compose stack
+- [x] PostgreSQL-backed MLflow
+- [x] Persistent MLflow artifact volume
+- [x] API → MLflow configuration through environment variables
+- [x] Local Compose stack successfully running with PostgreSQL, MLflow and FastAPI containers
+
+### Not yet completed
+
+- [ ] Bootstrap/register the selected model in the new PostgreSQL-backed MLflow environment
+- [ ] Make model version selection configurable rather than hardcoded to version `1`
+- [ ] Production-grade secrets management
+- [ ] S3 artifact storage
+- [ ] CI pipeline
+- [ ] Automated image build/push
+- [ ] Kubernetes deployment
+- [ ] GitOps
+- [ ] Inference observability
+- [ ] Model/data drift monitoring
+- [ ] Automated retraining
+- [ ] Promotion/rollback workflow
 
 ---
 
 # Next phase
 
-## MLflow Model Registry
-
-The next objective is to move from:
-
-> "We trained and selected a model."
-
-to:
-
-> "We have a versioned model with a controlled lifecycle that can be promoted toward production."
+The project should now move decisively toward MLOps engineering rather than adding more manual model experiments.
 
 Planned sequence:
 
-```
+```text
 Selected model
       ↓
-MLflow Model Registry
+MLflow Model Registry in shared PostgreSQL-backed environment
       ↓
-Model versioning
+Model version / promotion strategy
       ↓
-Model lifecycle / promotion
+CI pipeline
       ↓
-CI/CD
-      ↓
-Containerized inference API
+Container image build + registry
       ↓
 Kubernetes deployment
       ↓
-Monitoring
+GitOps
       ↓
-Retraining / rollback
+Monitoring / alerting
+      ↓
+Drift detection
+      ↓
+Retraining / promotion / rollback
 ```
-
-The project should now progressively shift from manual ML experimentation toward production MLOps engineering.
 
 ---
 
@@ -459,7 +647,7 @@ The project should now progressively shift from manual ML experimentation toward
 
 Learn by:
 
-```
+```text
 Problem
    ↓
 Pain / failure mode
