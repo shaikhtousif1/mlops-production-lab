@@ -1,62 +1,96 @@
-# MLOps Production Lab — Teaching Guide
+# MLOps Production Lab — Hands-on Workbook
 
-This guide explains the same learning path used in `mlops-production-lab`, but is written so another engineer can teach or follow it without needing the original conversation.
+This workbook is the executable version of the lab. Another engineer should be able to clone the repository, follow the checkpoints, validate each result, and understand **why** each step exists.
 
-The goal is **not** to teach isolated tools. The goal is to show how an ML workload moves from experimentation to a repeatable production system.
-
----
-
-# 1. What are we building?
-
-We are building a small customer-churn prediction platform.
-
-The model predicts whether a customer is likely to churn from:
-
-- age
-- tenure in months
-- monthly charges
-- support tickets
-- usage hours
-
-The project deliberately evolves through multiple stages:
+The project is a small customer-churn prediction system, but the real subject is the MLOps lifecycle:
 
 ```text
-Dataset
-   ↓
-Training
-   ↓
-Evaluation
-   ↓
-Experiment tracking
-   ↓
-Model selection
-   ↓
-Model Registry
-   ↓
-Prediction API
-   ↓
-Docker
-   ↓
-Docker Compose
-   ↓
-Kubernetes
-   ↓
-CI/CD + GitOps
-   ↓
-Monitoring + retraining
+Data → Train → Evaluate → Track → Select → Register → Test → Package → Publish → Deploy → Automate
 ```
-
-The important lesson is the **system lifecycle**, not the churn model itself.
 
 ---
 
-# 2. Start with a deliberately imperfect dataset
+# 0. Prerequisites
 
-The first version used only 20 synthetic records. Several Logistic Regression configurations produced nearly perfect results.
+You need:
 
-That creates a bad teaching example because the model-selection problem disappears.
+- Git
+- VS Code
+- VS Code Dev Containers extension
+- Docker Desktop with WSL2 integration
+- Python 3.11 if running outside the Dev Container
+- `kubectl` for Kubernetes practice
+- a Kubernetes cluster you can dispose of after the exercise
+- a GitHub account
 
-We therefore generated Dataset v2 with 1,000 records and more realistic overlap/noise.
+Cloud resources are **not required** for this workbook.
+
+The lab intentionally uses disposable Kubernetes environments so the learner can practice deployment without maintaining AWS EKS or Azure AKS.
+
+---
+
+# 1. Clone and open the project
+
+```bash
+git clone https://github.com/shaikhtousif1/mlops-production-lab.git
+cd mlops-production-lab
+```
+
+Open the folder in VS Code and reopen it in the Dev Container.
+
+Verify:
+
+```bash
+python --version
+git --version
+```
+
+Expected Python:
+
+```text
+Python 3.11.x
+```
+
+---
+
+# 2. Understand the repository
+
+Important paths:
+
+```text
+mlops-production-lab/
+├── .github/workflows/mlops-ci.yml   # CI pipeline
+├── data/                             # datasets
+├── k8s/                              # Kubernetes manifests
+├── mlflow/                           # MLflow server image
+├── src/
+│   ├── generate_data.py              # dataset generator
+│   ├── train.py                      # training + MLflow logging
+│   ├── select_model.py               # model quality gate
+│   ├── register_model.py             # registry
+│   ├── predict.py                    # prediction script
+│   └── api.py                        # FastAPI serving
+├── tests/
+│   ├── test_api.py
+│   └── test_model.py
+├── Dockerfile
+├── docker-compose.yml
+├── pytest.ini
+├── requirements.txt
+└── PROGRESS.md
+```
+
+Before doing anything else:
+
+```bash
+git status
+```
+
+The working tree should normally be clean.
+
+---
+
+# 3. Generate the dataset
 
 Run:
 
@@ -64,743 +98,723 @@ Run:
 python src/generate_data.py
 ```
 
-Expected characteristics:
-
-```text
-1,000 records
-~47.6% churn
-```
-
 The generator uses a fixed seed so the dataset is reproducible.
 
-## Teaching point
+Inspect it:
 
-A machine-learning pipeline is only as useful as the experimental conditions around it. A tiny, overly easy dataset can hide problems in model comparison.
+```bash
+head data/customers.csv
+```
+
+The dataset contains:
+
+```text
+age
+tenure_months
+monthly_charges
+support_tickets
+usage_hours
+churned
+```
+
+Why synthetic data?
+
+Because the goal is to learn the engineering lifecycle without requiring a real customer dataset.
+
+Why not use the original tiny dataset?
+
+The original 20-row dataset made several configurations look almost perfect, which removed the interesting model-selection problem. Dataset v2 introduces enough overlap/noise to make evaluation imperfect and therefore useful.
 
 ---
 
-# 3. Train the first model
+# 4. Train one experiment
 
-We use Logistic Regression because it is simple enough to understand while still exposing the important MLOps concepts.
-
-Example:
+Run:
 
 ```bash
 python src/train.py --c 0.1
 ```
 
-The training code performs:
+The training workflow performs:
 
-1. Load dataset
-2. Separate features and target
-3. Stratified train/test split
-4. 5-fold cross-validation
-5. Model training
-6. Prediction
-7. Metric calculation
-8. MLflow logging
-9. Model artifact logging
+1. dataset loading
+2. train/test split
+3. 5-fold cross-validation
+4. model training
+5. prediction
+6. metric calculation
+7. MLflow parameter/metric logging
+8. MLflow model logging
 
----
-
-# 4. Understand the metrics
-
-The project records:
-
-- Accuracy
-- Precision
-- Recall
-- F1
-- ROC-AUC
-- Mean CV accuracy
-- CV accuracy standard deviation
-- Mean CV F1
-- CV F1 standard deviation
-
-There is an important distinction between predictions and probabilities.
+Key distinction:
 
 ```python
 predictions = model.predict(X_test)
 probabilities = model.predict_proba(X_test)[:, 1]
 ```
 
-Use `predictions` for classification metrics such as F1.
-
-Use `probabilities` for ROC-AUC.
-
-## Teaching point
-
-Do not treat all metrics as interchangeable. Each metric answers a different question.
+Use hard predictions for classification metrics. Use probabilities for ROC-AUC.
 
 ---
 
-# 5. Why cross-validation matters
+# 5. Run multiple experiments
 
-Instead of evaluating a model on one arbitrary training split, we use 5-fold cross-validation.
+The important parameter is Logistic Regression `C`.
 
-Conceptually:
+Run:
 
-```text
-Dataset
-   ↓
-┌────┬────┬────┬────┬────┐
-│ F1 │ F1 │ F1 │ F1 │ F1 │
-└────┴────┴────┴────┴────┘
-          ↓
-      Mean CV F1
-          +
-       CV Std
+```bash
+python src/train.py --c 0.01
+python src/train.py --c 0.1
+python src/train.py --c 1
+python src/train.py --c 10
+python src/train.py --c 100
 ```
 
-The mean tells us typical performance across folds.
+The point is not to memorize Logistic Regression. The point is to create multiple reproducible experiments that can be compared.
 
-The standard deviation gives a basic view of stability across folds.
-
----
-
-# 6. Why MLflow exists
-
-Without experiment tracking, an engineer quickly ends up with:
-
-```text
-model_final.py
-model_final2.py
-model_final_new.py
-model_final_really_final.py
-```
-
-MLflow gives us a structured record of experiments.
-
-A run contains things such as:
-
-```text
-Run
- ├── Parameters
- ├── Metrics
- ├── Tags
- └── Artifacts
-```
-
-For this project, parameters include:
-
-```text
-C
-max_iter
-test_size
-random_state
-```
-
-Metrics include:
-
-```text
-accuracy
-precision
-recall
-f1
-roc_auc
-mean_f1
-std_f1
-```
-
----
-
-# 7. Critical concept: an MLflow run is NOT a container
-
-This confused us initially, so it is worth teaching explicitly.
-
-An MLflow run represents **one experiment execution**.
-
-A container is a **runtime environment**.
-
-One container can execute many MLflow runs:
-
-```text
-Dev Container
-    │
-    ├── Run C=0.01
-    ├── Run C=0.1
-    ├── Run C=1
-    ├── Run C=10
-    └── Run C=100
-```
-
-Think:
-
-```text
-Container = where the code runs
-MLflow run = what happened during one experiment
-```
-
-This distinction becomes extremely important when designing MLOps platforms.
-
----
-
-# 8. Dataset lineage is part of experiment lineage
-
-The project initially had old MLflow runs from Dataset v1.
-
-When Dataset v2 was generated, the old runs were still visible.
-
-Without a dataset-version filter, the selector found an old perfect-looking run and selected it.
-
-We therefore added:
+The project records the dataset version as an MLflow tag:
 
 ```python
 mlflow.set_tag("dataset_version", "v2")
 ```
 
-The selector now filters on that tag.
-
-## Teaching point
-
-Never blindly compare models trained on different data versions.
-
-A model result should be traceable to:
-
-```text
-Dataset version
-      ↓
-Code version
-      ↓
-Parameters
-      ↓
-Training run
-      ↓
-Model artifact
-```
-
-This is model lineage.
+This prevents old Dataset v1 runs from being accidentally selected.
 
 ---
 
-# 9. Hyperparameter experimentation
+# 6. Understand model selection
 
-We tested:
+Run:
 
-```text
-C = 0.01
-C = 0.1
-C = 1
-C = 10
-C = 100
+```bash
+python src/select_model.py
 ```
 
-The approximate CV-F1 results were:
-
-| C | Mean CV F1 | CV F1 Std |
-|---:|---:|---:|
-| 0.01 | 61.61% | 4.54% |
-| 0.1 | 61.87% | 4.36% |
-| 1 | 61.57% | 3.96% |
-| 10 | 61.57% | 3.96% |
-| 100 | 61.57% | 3.96% |
-
-C=0.1 is numerically highest, but the difference is tiny.
-
-That is an important lesson:
-
-> A metric winner is not automatically a practically meaningful winner.
-
-The system still needs a deterministic selection policy, but we should not exaggerate a 0.26 percentage-point difference.
-
----
-
-# 10. Model selection policy
-
-The project contains:
+The selector applies a deterministic policy:
 
 ```text
-src/select_model.py
+1. dataset_version=v2
+2. complete runs only
+3. highest mean CV F1
+4. lowest CV F1 standard deviation
+5. highest recall
+6. highest precision
 ```
 
-The selector follows this policy:
+Why not repeatedly select using test F1?
 
-```text
-1. Filter dataset_version=v2
-2. Remove incomplete runs
-3. Highest mean CV F1
-4. Lowest CV F1 standard deviation
-5. Highest recall
-6. Highest precision
-```
+Because the final test set can become an implicit tuning dataset.
 
-The selected candidate was:
-
-```text
-C = 0.1
-Mean CV F1 = 0.6187
-CV F1 Std = 0.0436
-Test F1 = 0.6243
-Recall = 0.6211
-Precision = 0.6277
-```
-
-## Why not select on test F1?
-
-Because repeatedly using the final test set for model decisions turns it into a tuning dataset.
-
-Instead:
+The intended flow is:
 
 ```text
 Training data
-      ↓
+   ↓
 Cross-validation
-      ↓
+   ↓
 Model selection
-      ↓
+   ↓
 Final test evaluation
 ```
 
-The test set should remain as an independent final check as much as possible.
-
 ---
 
-# 11. ML Engineer vs MLOps Engineer
+# 7. Understand MLflow Model Registry
 
-This project intentionally crosses both areas so the boundary becomes clear.
+Register the selected model:
 
-## ML Engineer / Data Scientist responsibilities
+```bash
+python src/register_model.py
+```
 
-Typically include:
-
-- feature engineering
-- model architecture
-- hyperparameter tuning
-- evaluation methodology
-- business metrics
-- model-quality requirements
-
-## MLOps responsibilities
-
-Typically include:
-
-- reproducible training
-- experiment tracking infrastructure
-- model registry
-- model packaging
-- serving
-- CI/CD
-- infrastructure
-- Kubernetes
-- cloud integration
-- observability
-- drift detection
-- retraining automation
-- promotion and rollback
-
-The MLOps engineer does not need to become the world's best statistician. They need enough ML understanding to build reliable systems around ML workloads.
-
----
-
-# 12. Model Registry
-
-After selecting the candidate, we introduced the MLflow Model Registry.
-
-The model was registered as:
+The project uses the registered model name:
 
 ```text
 customer-churn-model
-Version 1
 ```
 
-This changes the mental model from:
+The working checkpoint has version 1 with the `production` alias.
+
+You can inspect it through the MLflow UI when the Compose stack is running, or with the MLflow client.
+
+Important mental model:
 
 ```text
-some model artifact on disk
+Experiment run
+    ≠
+Model version
+    ≠
+Docker image
 ```
 
-to:
-
-```text
-named model
-   ↓
-version
-   ↓
-controlled lifecycle
-```
-
-That is the beginning of model deployment governance.
+They are related, but they solve different problems.
 
 ---
 
-# 13. Prediction service
+# 8. Run the local API
 
-A prediction script loads the registered model:
+The API currently packages `model.pkl` directly into the container image.
 
-```text
-models:/customer-churn-model/1
+This is deliberate because the local MLflow artifact-storage path proved unnecessarily distracting for this learning objective.
+
+The model is created by training with:
+
+```python
+joblib.dump(model, "model.pkl")
 ```
 
-Then we created a FastAPI service.
+and served with:
 
-Endpoints:
+```python
+joblib.load("model.pkl")
+```
+
+Do not use:
+
+```python
+mlflow.pyfunc.load_model("model.pkl")
+```
+
+because `model.pkl` is a joblib artifact, not an MLflow model directory.
+
+---
+
+# 9. Run API tests
+
+Run the complete test suite:
+
+```bash
+pytest -v
+```
+
+Expected:
 
 ```text
-GET  /
+3 passed
+```
+
+The tests cover:
+
+```text
+GET /
 POST /predict
+model.pkl loading + prediction
 ```
 
-The service receives customer attributes and returns:
+If you see:
 
-```json
-{"prediction": 1}
+```text
+ModuleNotFoundError: No module named 'src'
 ```
 
-Swagger/OpenAPI makes this particularly useful for learning because the API can be tested interactively from the browser.
+make sure `pytest.ini` contains:
+
+```ini
+[pytest]
+pythonpath = .
+testpaths = tests
+```
+
+Then rerun:
+
+```bash
+pytest -v
+```
 
 ---
 
-# 14. Why environment variables matter
+# 10. Run the API with Docker Compose
 
-The API does not hardcode the MLflow server address anymore.
-
-It reads:
-
-```text
-MLFLOW_TRACKING_URI
-MODEL_URI
-```
-
-This is important because the same image should be usable in different environments.
-
-For example:
-
-```text
-Local
-  → http://mlflow:5000
-
-Kubernetes
-  → http://mlflow.namespace.svc:5000
-
-Cloud
-  → managed/external MLflow endpoint
-```
-
-The image should not need to be rebuilt just because the environment changed.
-
----
-
-# 15. Dockerfile vs Docker Compose
-
-This is another critical distinction.
-
-## Dockerfile
-
-Defines how to build **one image**.
-
-```text
-Dockerfile
-    ↓
-API image
-```
-
-## Docker Compose
-
-Defines how **multiple services work together**.
-
-```text
-Compose
- ├── PostgreSQL
- ├── MLflow
- └── FastAPI
-```
-
-In other words:
-
-```text
-Dockerfile = packaging
-Compose    = local orchestration
-```
-
-Compose is not Kubernetes. But the mental model is useful preparation for Kubernetes.
-
----
-
-# 16. Current Compose architecture
-
-The project now uses:
-
-```text
-                    Docker Compose
-                         │
-        ┌────────────────┼────────────────┐
-        │                │                │
-        ▼                ▼                ▼
-   PostgreSQL          MLflow          FastAPI
-     :5432              :5000            :8000
-        │                │                │
-        │                ├── Tracking     │
-        │                ├── Registry     │
-        │                └── Artifacts    │
-        │                                 │
-        └─────────────────────────────────┘
-```
-
-### PostgreSQL
-
-Stores MLflow backend metadata and model-registry information.
-
-### MLflow
-
-Provides:
-
-- tracking server
-- experiment UI
-- model registry
-
-### FastAPI
-
-Provides model inference.
-
-### Persistent volumes
-
-```text
-postgres_data
-mlflow_artifacts
-```
-
-These survive container replacement.
-
----
-
-# 17. Why PostgreSQL replaced local SQLite
-
-The original development environment used local SQLite/file-based MLflow state.
-
-That is useful for a single developer learning MLflow.
-
-For a shared service, a database-backed tracking server is a better architecture.
-
-The conceptual split is:
-
-```text
-PostgreSQL
-   ↓
-experiments
-runs
-parameters
-metrics
-registry metadata
-
-Artifact storage
-   ↓
-model files
-plots
-other artifacts
-```
-
-This distinction becomes even more important when the artifact backend moves to S3.
-
----
-
-# 18. The S3 lesson
-
-We initially tried to add MinIO and LocalStack as local S3-compatible storage.
-
-The current environment introduced image/registry/licensing friction, so we deliberately removed that complexity rather than allowing the tutorial to become a MinIO/LocalStack troubleshooting session.
-
-The architectural target remains:
-
-```text
-Local learning
-     ↓
-Docker volume
-
-Production
-     ↓
-Object storage
-     ↓
-AWS S3
-```
-
-The MLflow image already includes `boto3` in preparation for that future step.
-
----
-
-# 19. Compose troubleshooting lessons
-
-A successful command such as:
+Start the stack:
 
 ```bash
 docker compose up -d
 ```
 
-does not prove the whole application is healthy.
-
-Always check:
+Check service health:
 
 ```bash
 docker compose ps -a
 ```
 
-If a service exited:
+If anything is not running:
 
 ```bash
 docker compose logs <service>
 ```
 
-Examples:
+The Compose architecture is:
 
-```bash
-docker compose logs mlflow
-docker compose logs api
+```text
+PostgreSQL
+    ↓
+MLflow
+    ↓
+FastAPI
 ```
 
-This is an important production mindset:
+Check the API:
 
-> Container creation is not the same thing as application health.
+```bash
+curl http://localhost:8000/
+```
+
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+Run prediction:
+
+```bash
+curl -X POST "http://localhost:8000/predict?age=45&tenure_months=24&monthly_charges=80&support_tickets=2&usage_hours=150"
+```
+
+Expected shape:
+
+```json
+{"prediction":1}
+```
+
+The exact prediction is model/data dependent; the important contract is that the endpoint returns a valid class.
 
 ---
 
-# 20. What should be productionized next?
+# 11. Build the production-style API image
 
-The current stack is intentionally not the final production platform.
+```bash
+docker compose build api
+```
 
-Next improvements should be:
+The root Dockerfile does the important packaging work:
 
-### Model lifecycle
+```dockerfile
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY model.pkl .
+COPY src ./src
+```
 
-- dynamic model version selection
-- promotion strategy
-- rollback strategy
+The resulting image contains everything required to run the API.
 
-### Artifact storage
+This is the first important production-style boundary:
 
-Move from local Docker volume to S3.
+```text
+Developer workspace
+       ↓
+Portable container image
+```
 
-### Secrets
+---
 
-Remove plain-text database credentials from Compose and introduce proper secret management.
+# 12. Publish the image to GHCR
 
-### CI
+The GitHub Actions workflow publishes:
 
-Automate:
+```text
+ghcr.io/<owner>/customer-churn-api:<git-sha>
+ghcr.io/<owner>/customer-churn-api:latest
+```
+
+The package must be readable by the Kubernetes environment. For a disposable public-learning environment, making the GHCR package public is the simplest option.
+
+Verify from another environment:
+
+```bash
+docker pull ghcr.io/<owner>/customer-churn-api:latest
+```
+
+If the pull works without credentials, the package is public/readable.
+
+---
+
+# 13. Prepare Kubernetes
+
+Use a disposable Kubernetes cluster.
+
+Verify access:
+
+```bash
+kubectl config get-contexts
+kubectl get nodes
+```
+
+You need at least one node in `Ready` state.
+
+Do not create AWS EKS or Azure AKS just for this workbook. The objective here is Kubernetes deployment mechanics.
+
+---
+
+# 14. Deploy the API
+
+Inspect the manifests:
+
+```bash
+cat k8s/deployment.yaml
+cat k8s/service.yaml
+```
+
+Apply them:
+
+```bash
+kubectl apply -f k8s/
+```
+
+Check:
+
+```bash
+kubectl get deployments
+kubectl get pods
+kubectl get services
+```
+
+Wait until:
+
+```text
+customer-churn-api   1/1
+```
+
+If the pod is stuck:
+
+```bash
+kubectl describe pod <pod-name>
+kubectl logs <pod-name>
+```
+
+---
+
+# 15. Understand the local-image trap
+
+On Docker Desktop Kubernetes, an image built in Docker Desktop may not automatically be available to Kubernetes depending on the runtime configuration.
+
+A common disposable-lab symptom is:
+
+```text
+ErrImageNeverPull
+```
+
+If using:
+
+```yaml
+imagePullPolicy: Never
+```
+
+Kubernetes expects the image to already exist in its container runtime.
+
+For the disposable online cluster, avoid this problem by pulling the GHCR image directly.
+
+This is a useful lesson:
+
+```text
+Docker image on my laptop
+        ≠
+Docker image available to Kubernetes
+```
+
+A registry creates the distribution boundary.
+
+---
+
+# 16. Validate the Kubernetes service
+
+Port-forward:
+
+```bash
+kubectl port-forward service/customer-churn-api 8001:8000
+```
+
+In another terminal:
+
+```bash
+curl http://localhost:8001/
+```
+
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+Then:
+
+```bash
+curl -X POST "http://localhost:8001/predict?age=45&tenure_months=24&monthly_charges=80&support_tickets=2&usage_hours=150"
+```
+
+Expected shape:
+
+```json
+{"prediction":1}
+```
+
+At this point you have proven:
+
+```text
+GHCR
+  ↓
+Kubernetes
+  ↓
+Pod
+  ↓
+FastAPI
+  ↓
+Model
+  ↓
+Prediction
+```
+
+---
+
+# 17. Understand the current CI pipeline
+
+Open:
+
+```text
+.github/workflows/mlops-ci.yml
+```
+
+The current pipeline is:
+
+```text
+Checkout
+  ↓
+Python setup
+  ↓
+Install dependencies
+  ↓
+Syntax validation
+  ↓
+pytest
+  ↓
+Training
+  ↓
+Quality gate
+  ↓
+Model registration
+  ↓
+GHCR login
+  ↓
+Docker build + push
+```
+
+The pipeline already tests the application before publishing the image.
+
+That is the current CI boundary.
+
+---
+
+# 18. What we deliberately skip
+
+Do not spend time implementing these before the next milestone:
+
+- AWS EKS
+- Azure AKS
+- MinIO
+- LocalStack
+- production secrets management
+- elaborate local artifact-storage infrastructure
+
+Those are real production topics, but they do not need to block the current learning objective.
+
+The disposable Kubernetes environment is enough.
+
+---
+
+# 19. Next hands-on milestone: CI-driven deployment
+
+The next exercise is to extend the existing pipeline from:
+
+```text
+Build → Push
+```
+
+to:
+
+```text
+Build
+  ↓
+Push GHCR
+  ↓
+Deploy Kubernetes
+  ↓
+Wait for rollout
+  ↓
+Run smoke test
+```
+
+The first version should deploy the immutable Git-SHA image, not `latest`.
+
+Target flow:
 
 ```text
 Git push
    ↓
-Tests
+GitHub Actions
    ↓
-Train / validate
+pytest
    ↓
-Build image
+quality gate
    ↓
-Push image
+Docker build
+   ↓
+GHCR
+   ↓
+kubectl set image / manifest update
+   ↓
+rollout status
+   ↓
+API smoke test
 ```
 
-### Kubernetes
-
-Deploy:
-
-```text
-FastAPI
-MLflow
-PostgreSQL / managed DB
-```
-
-using Kubernetes primitives.
-
-### GitOps
-
-Move deployment configuration into Git and use a GitOps controller to reconcile the desired state.
-
-### Observability
-
-Monitor:
-
-- API latency
-- request rate
-- errors
-- model prediction distribution
-- resource usage
-- model/data drift
-
-### Retraining
-
-Eventually:
-
-```text
-New data
-   ↓
-Training
-   ↓
-Evaluation
-   ↓
-Model selection
-   ↓
-Registry
-   ↓
-Promotion
-   ↓
-Deployment
-```
+Only after this works should GitOps be introduced.
 
 ---
 
-# 21. Recommended teaching sequence
+# 20. GitOps milestone
 
-If teaching this project to another engineer, do not dump all tools on them at once.
-
-Use this sequence:
+After CI-driven deployment works, move deployment responsibility into Git:
 
 ```text
-Session 1
-ML basics + dataset + training
-
-Session 2
-Evaluation + cross-validation + MLflow
-
-Session 3
-Experiment comparison + model selection
-
-Session 4
-Model Registry + prediction
-
-Session 5
-FastAPI + Swagger
-
-Session 6
-Docker
-
-Session 7
-Docker Compose + PostgreSQL + MLflow
-
-Session 8
-CI/CD
-
-Session 9
+Application repository
+        ↓
+Deployment configuration
+        ↓
+FluxCD
+        ↓
 Kubernetes
-
-Session 10
-GitOps + monitoring + retraining
 ```
 
-At every stage ask:
+The key lesson will be the difference between:
 
-1. What problem are we solving?
-2. Why does the previous approach stop being sufficient?
-3. What does the new tool provide?
-4. Where does state live?
-5. How do we validate it?
-6. What would change in production?
-
-That keeps the training architecture-driven rather than command-driven.
+```text
+CI = build / test / publish
+CD = deploy
+GitOps = desired state stored in Git + reconciliation
+```
 
 ---
 
-# 22. The key mental model
+# 21. Production evolution
 
-The most important takeaway is this:
+The final learning path is:
 
 ```text
-ML Engineer creates a model.
-
-MLOps Engineer creates the system that makes the model
-reproducible, deployable, observable, governable and replaceable.
+Python training
+      ↓
+MLflow
+      ↓
+Model Registry
+      ↓
+FastAPI
+      ↓
+Docker
+      ↓
+GHCR
+      ↓
+Kubernetes
+      ↓
+CI/CD
+      ↓
+FluxCD
+      ↓
+Observability
+      ↓
+Drift detection
+      ↓
+Retraining
+      ↓
+Promotion / rollback
+      ↓
+AWS EKS / Azure AKS
 ```
 
-A model is an artifact.
+The cloud comes last because the same deployment concepts can be learned without paying for infrastructure.
 
-The MLOps platform is the system around that artifact.
+---
 
-The project is now transitioning from learning the artifact to engineering that system.
+# 22. Troubleshooting cheat sheet
+
+### `ModuleNotFoundError: No module named 'src'`
+
+Run from repository root and ensure `pytest.ini` contains:
+
+```ini
+[pytest]
+pythonpath = .
+testpaths = tests
+```
+
+### `Could not find an MLmodel configuration file`
+
+You tried to load a joblib `.pkl` file with MLflow PyFunc. Use:
+
+```python
+joblib.load("model.pkl")
+```
+
+### `STACK_GLOBAL requires str`
+
+Same root cause: the file is joblib/pickle data and should be loaded with joblib.
+
+### API container exits
+
+```bash
+docker compose logs api --tail=50
+```
+
+### Kubernetes `ErrImageNeverPull`
+
+The Kubernetes runtime does not have the local image. Push/pull through a registry or import the image into the correct runtime.
+
+### Kubernetes pod pending
+
+```bash
+kubectl describe pod <pod-name>
+```
+
+### Kubernetes API test
+
+```bash
+kubectl port-forward service/customer-churn-api 8001:8000
+curl http://localhost:8001/
+```
+
+---
+
+# 23. Definition of done for the current phase
+
+You are finished with the current phase when all of these are true:
+
+```text
+[x] pytest -v → 3 passed
+[x] API runs in Docker
+[x] image exists in GHCR
+[x] Kubernetes pod is Running
+[x] readiness/liveness probes pass
+[x] / returns 200
+[x] /predict returns a valid prediction
+[x] CI builds and publishes the image
+```
+
+Then stop adding infrastructure.
+
+The next task is CI-driven Kubernetes deployment.
+
+---
+
+# 24. Engineering questions to ask at every step
+
+For every tool introduced, answer:
+
+1. What problem does it solve?
+2. Why was the previous approach insufficient?
+3. Where does state live?
+4. How is the workload validated?
+5. What happens when the process/container/node disappears?
+6. How would this change in AWS or Azure?
+7. How would this be automated?
+8. How would we roll it back?
+
+That is the core of the workbook: **do the task, understand the failure mode, then connect it to the production equivalent.**
