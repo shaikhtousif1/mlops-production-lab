@@ -2,7 +2,6 @@ from fastapi.testclient import TestClient
 
 from src.api import app
 
-
 client = TestClient(app)
 
 
@@ -13,7 +12,7 @@ def test_health_check():
     assert response.json() == {"status": "ok"}
 
 
-def test_predict():
+def test_prediction():
     response = client.post(
         "/predict",
         params={
@@ -26,4 +25,8 @@ def test_predict():
     )
 
     assert response.status_code == 200
-    assert response.json()["prediction"] in [0, 1]
+
+    result = response.json()
+
+    assert "prediction" in result
+    assert result["prediction"] in [0, 1]
