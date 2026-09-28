@@ -16,8 +16,8 @@ spec:
     spec:
       containers:
         - name: customer-churn-api
-          image: mlops-production-lab-api:latest
-          imagePullPolicy: Never
+          image: ghcr.io/shaikhtousif1/customer-churn-api:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           readinessProbe:
