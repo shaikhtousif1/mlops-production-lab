@@ -1,6 +1,7 @@
 import argparse
 import pandas as pd
 import mlflow
+import joblib
 
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.linear_model import LogisticRegression
@@ -95,6 +96,7 @@ def main():
 
         # 6. Train the model
         model.fit(X_train, y_train)
+        joblib.dump(model, "model.pkl")
         print("y_test shape:", y_test.shape)
         
 

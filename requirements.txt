@@ -3,3 +3,4 @@ scikit-learn
 mlflow==3.16.1
 fastapi
 uvicorn
+joblib

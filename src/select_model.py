@@ -1,6 +1,8 @@
-import mlflow
 import sys
+import mlflow
+from mlflow import MlflowClient
 
+MODEL_NAME = "customer-churn-model"
 
 MIN_CV_F1 = 0.60
 MIN_TEST_F1 = 0.60
@@ -62,7 +64,7 @@ def main():
     print(f"Recall: {recall:.4f}")
     print(f"Precision: {precision:.4f}")
 
-    # Quality gate
+    # Model quality gate
     print("\nRunning model quality gate...")
 
     checks = {
@@ -82,8 +84,42 @@ def main():
 
     print("\nModel quality gate PASSED.")
 
-    # Output selected run ID for downstream processes
-    print(f"\nSelected run ID: {run_id}")
+    # Register selected model
+    model_uri = f"runs:/{run_id}/model"
+
+    print(f"\nRegistering model: {MODEL_NAME}")
+
+    result = mlflow.register_model(
+        model_uri=model_uri,
+        name=MODEL_NAME,
+    )
+
+    print(f"Model: {result.name}")
+    print(f"Version: {result.version}")
+
+    # Set production alias
+    client = MlflowClient()
+
+    client.set_registered_model_alias(
+        name=MODEL_NAME,
+        alias="production",
+        version=result.version,
+    )
+
+    print(f"Production alias: {result.version}")
+
+    # Verify alias
+    production_version = client.get_model_version_by_alias(
+        MODEL_NAME,
+        "production",
+    )
+
+    print("\nProduction model:")
+    print(f"Model: {production_version.name}")
+    print(f"Version: {production_version.version}")
+    print(f"Run ID: {production_version.run_id}")
+
+    print("\nModel successfully registered and promoted to production.")
 
 
 if __name__ == "__main__":

@@ -1,24 +1,10 @@
-import os
-
-import mlflow
 import pandas as pd
+import joblib
 from fastapi import FastAPI
 
 app = FastAPI(title="Customer Churn Prediction API")
 
-MLFLOW_TRACKING_URI = os.getenv(
-    "MLFLOW_TRACKING_URI",
-    "http://mlflow:5000",
-)
-
-mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-
-MODEL_URI = os.getenv(
-    "MODEL_URI",
-    "models:/customer-churn-model/1",
-)
-
-model = mlflow.pyfunc.load_model(MODEL_URI)
+model = joblib.load("model.pkl")
 
 
 @app.get("/")
