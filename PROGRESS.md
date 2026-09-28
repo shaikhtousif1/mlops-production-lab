@@ -274,3 +274,300 @@ Hands-on validation
   ↓
 Production equivalent
 ```
+
+---
+
+# Project Continuity Record
+
+This section exists specifically so a future session can reconstruct the project state from the repository instead of relying on conversational memory.
+
+## Source of truth
+
+When continuing the project, inspect these in this order:
+
+1. `PROGRESS.md` — current milestone and validated state.
+2. `MLOPS_TEACHING_GUIDE.md` — executable learning path and known troubleshooting.
+3. `.github/workflows/mlops-ci.yml` — current CI/CD implementation.
+4. `src/` — actual application/training implementation.
+5. `tests/` — executable quality contract.
+6. `k8s/` — current Kubernetes desired state.
+7. `Dockerfile` and `docker-compose.yml` — local/container execution model.
+8. Git history — what changed and why when the current state is ambiguous.
+
+Never assume an old conversational command is still correct if the repository differs.
+
+## Learner profile and project objective
+
+The learner already has strong infrastructure experience with AWS/Azure, Kubernetes, Docker, Terraform, GitOps/FluxCD and CI/CD. Therefore this lab is **not** intended to teach basic Kubernetes or cloud administration from scratch.
+
+The learning objective is to build the missing MLOps mental model end-to-end:
+
+```text
+ML experiment
+→ reproducible training
+→ evaluation
+→ model selection
+→ model registry
+→ model serving
+→ application testing
+→ containerization
+→ image distribution
+→ Kubernetes deployment
+→ CI/CD
+→ GitOps
+→ observability
+→ model/data lifecycle
+```
+
+The assistant should explain the ML-specific and MLOps-specific reasoning while avoiding unnecessary detours into infrastructure that the learner already understands.
+
+## Current validated environment
+
+The project has been exercised in:
+
+- VS Code Dev Container
+- Python 3.11.x
+- Docker Desktop / WSL2 during local development
+- disposable Kubernetes environments
+- GitHub Actions
+- GitHub Container Registry (GHCR)
+
+The disposable Kubernetes environment used during validation had Kubernetes `v1.36.1` and successfully ran the API image pulled from GHCR.
+
+## Important exact implementation facts
+
+### Training
+
+`src/train.py` uses Logistic Regression and writes two different model representations:
+
+```text
+model.pkl
+  → joblib serialized sklearn model used by the API image
+
+MLflow logged model under artifact path `model`
+  → MLflow model representation used for experiment/registry learning
+```
+
+Do not conflate these two artifacts.
+
+### Serving
+
+`src/api.py` currently serves the packaged joblib model:
+
+```python
+model = joblib.load("model.pkl")
+```
+
+The API contract is:
+
+```text
+GET  /
+POST /predict
+```
+
+Prediction inputs:
+
+```text
+age: int
+tenure_months: int
+monthly_charges: float
+support_tickets: int
+usage_hours: float
+```
+
+The response contains a class prediction:
+
+```json
+{"prediction": 1}
+```
+
+The exact class can vary with the trained model; the test contract is that a valid prediction is returned.
+
+### CI
+
+The current GitHub Actions workflow performs validation, training and model-quality selection before building and publishing the API image.
+
+The current image tags are:
+
+```text
+ghcr.io/shaikhtousif1/customer-churn-api:${GITHUB_SHA}
+ghcr.io/shaikhtousif1/customer-churn-api:latest
+```
+
+The next CI improvement is to consume the immutable Git-SHA image during deployment instead of relying on `latest`.
+
+### Kubernetes
+
+Current manifests contain one API Deployment and one ClusterIP Service. The Deployment currently uses the image reference:
+
+```text
+mlops-production-lab-api:latest
+```
+
+with:
+
+```yaml
+imagePullPolicy: Never
+```
+
+That setting was useful for the local Docker Desktop image-import exercise but is **not** the desired registry-based deployment model for the next phase. The next Kubernetes change should use the GHCR image and an immutable Git-SHA tag.
+
+## Known failures and what they taught us
+
+### MLflow local artifact failure
+
+The MLflow metadata database contained the registered model/version and `production` alias, but `/mlartifacts` was empty. Loading:
+
+```text
+models:/customer-churn-model@production
+```
+
+therefore failed with:
+
+```text
+MlflowException: No such artifact: ''
+```
+
+Lesson: a model registry entry is metadata; the serving system still needs access to the actual model artifact.
+
+Decision: do not spend additional learning time implementing local object storage. Treat durable artifact storage as a production-platform concern and move forward.
+
+### Test import failure
+
+Running:
+
+```bash
+pytest tests/test_api.py -v
+```
+
+initially produced:
+
+```text
+ModuleNotFoundError: No module named 'src'
+```
+
+Adding repository-root configuration through `pytest.ini` fixed the test discovery/import path.
+
+Lesson: tests need a deterministic project import configuration, not a developer-specific shell environment.
+
+### Wrong loader for model.pkl
+
+An initial test tried:
+
+```python
+mlflow.pyfunc.load_model("model.pkl")
+```
+
+which failed because `model.pkl` did not contain an `MLmodel` directory structure.
+
+Changing the test to `pickle.load()` also failed with:
+
+```text
+UnpicklingError: STACK_GLOBAL requires str
+```
+
+The training code showed the actual serialization method:
+
+```python
+joblib.dump(model, "model.pkl")
+```
+
+The correct loader was therefore:
+
+```python
+joblib.load("model.pkl")
+```
+
+This resulted in the complete suite passing:
+
+```text
+3 passed
+```
+
+Lesson: always inspect how an artifact was produced before choosing a loader.
+
+### Local Docker image vs Kubernetes runtime
+
+Kubernetes initially reported:
+
+```text
+ErrImageNeverPull
+```
+
+because the image existed in the local Docker environment but was not available to the Kubernetes container runtime.
+
+The image was explicitly imported into the Docker Desktop Kubernetes runtime for the local exercise. Later, the same image was published to GHCR and pulled successfully from a disposable Kubernetes environment.
+
+Lesson:
+
+```text
+Build location
+  ≠
+Container runtime
+  ≠
+Registry
+```
+
+The registry is the distribution boundary that makes CI/CD portable.
+
+## What not to repeat unless the repository requires it
+
+Do not restart or re-teach these already-completed detours merely because they appeared in older chat history:
+
+- local MLflow artifact storage debugging
+- MinIO/LocalStack setup
+- Docker Desktop Kubernetes image-import mechanics
+- basic `kubectl` concepts
+- basic EKS/AKS concepts
+- basic CI/CD concepts
+
+Only revisit them if current repository state or a new failure requires it.
+
+## Next exact milestone
+
+The next implementation milestone is:
+
+```text
+CI build/test
+    ↓
+Build immutable GHCR image
+    ↓
+Deploy Git-SHA image to disposable Kubernetes
+    ↓
+Wait for rollout
+    ↓
+Run API smoke test
+    ↓
+Capture deployment evidence
+```
+
+After that:
+
+```text
+GitOps with FluxCD
+    ↓
+Observability
+    ↓
+MLOps-specific monitoring
+    ↓
+Drift/retraining/promotion
+```
+
+Do not jump to AWS/Azure yet. The learner already understands cloud Kubernetes; the value now is proving the MLOps delivery lifecycle first.
+
+## Session-start protocol
+
+When a new session begins, use this protocol before giving implementation commands:
+
+```text
+1. Read PROGRESS.md.
+2. Read the relevant section of MLOPS_TEACHING_GUIDE.md.
+3. Inspect the current GitHub tree/files needed for the next task.
+4. Check the latest commit on main.
+5. Identify the last completed milestone.
+6. Identify the first unfinished milestone.
+7. State that checkpoint briefly.
+8. Give only the commands needed for the next checkpoint.
+```
+
+If the repository contradicts an old conversation message, trust the repository and explicitly call out the difference.
