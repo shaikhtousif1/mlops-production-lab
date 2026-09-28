@@ -35,9 +35,15 @@ jobs:
 
       - name: Run training
         env:
-          MLFLOW_TRACKING_URI: file:./mlruns
+          MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
         run: |
           python src/train.py --c 0.1
+
+      - name: Run model quality gate
+        env:
+          MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
+        run: |
+          python src/select_model.py
 
       - name: Build API image
         run: |
