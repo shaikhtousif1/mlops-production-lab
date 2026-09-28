@@ -39,6 +39,10 @@ jobs:
           python -m py_compile src/predict.py
           python -m py_compile src/api.py
 
+      - name: Run tests
+        run: |
+          pytest -q
+
       - name: Run training
         env:
           MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
