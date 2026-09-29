@@ -34,14 +34,48 @@ Flux reconciliation
 
 ## Current repository checkpoint
 
-Latest commit inspected:
+The repository now also contains a **one-shot Killercoda bootstrap** so a disposable cluster can be rebuilt without manually repeating the Flux/Kubernetes setup from the previous session.
+
+Bootstrap entry point:
 
 ```text
-d61d3f8c911829dbaf37a97f3c18f5700bb6ecea
-updating devcontainer.json
+scripts/bootstrap-killercoda.sh
 ```
 
-The GitHub Actions run for that commit was observed as `in_progress` when this checkpoint was written. The previously completed pipeline run was green; the newest run should be treated as pending until GitHub reports its final conclusion.
+The bootstrap is designed to be idempotent and performs:
+
+```text
+Kubernetes verification
+  ↓
+Flux CLI installation
+  ↓
+Flux controller installation/reconciliation
+  ↓
+mlops namespace
+  ↓
+GitHub authentication secret
+  ↓
+Flux GitRepository
+  ↓
+Flux Kustomization
+  ↓
+source reconciliation
+  ↓
+application reconciliation
+  ↓
+Deployment/Pod readiness verification
+```
+
+The GitOps definitions are now stored in the repository:
+
+```text
+flux/git-repository.yaml
+flux/kustomization.yaml
+k8s/namespace.yaml
+k8s/kustomization.yaml
+```
+
+The application manifests remain the source of Kubernetes desired state.
 
 ## Completed
 
@@ -80,6 +114,7 @@ The GitHub Actions run for that commit was observed as `in_progress` when this c
 - [x] GHCR image build/push
 - [x] Git-SHA image tags
 - [x] Kubernetes Deployment + Service
+- [x] Kubernetes namespace and Kustomize entry point
 - [x] Readiness/liveness probes
 - [x] Resource requests/limits
 - [x] Kubernetes inference smoke test
@@ -88,6 +123,7 @@ The GitHub Actions run for that commit was observed as `in_progress` when this c
 - [x] Kubernetes successfully pulled the immutable GHCR image
 - [x] Kubernetes API prediction smoke test succeeded
 - [x] GitOps manifest commit is marked `[skip ci]` to avoid an unnecessary CI retrigger
+- [x] One-shot/idempotent Killercoda bootstrap added
 
 ## Latest validated model metrics
 
@@ -262,6 +298,38 @@ The API pod successfully reached `Ready=True`, and the prediction smoke test ret
 
 This proved the basic Git → Flux → Kubernetes reconciliation path.
 
+## Killercoda bootstrap
+
+A fresh Killercoda session should now only require the repository and a GitHub PAT. From the repository root:
+
+```bash
+bash scripts/bootstrap-killercoda.sh
+```
+
+The script prompts for `GITHUB_PAT` if it is not already exported.
+
+It creates/updates the GitHub authentication secret with `kubectl apply`, so rerunning the script is safe.
+
+It installs/reconciles Flux, configures the private Git source, reconciles the Kubernetes desired state, and waits for the API Deployment and Pod to become ready.
+
+This is intentionally **not** a separate application deployment mechanism. The script bootstraps the GitOps control plane; Flux still obtains the application desired state from Git.
+
+The intended boundary is:
+
+```text
+Killercoda bootstrap
+        ↓
+Flux control plane + credentials
+        ↓
+GitHub
+        ↓
+Flux reconciliation
+        ↓
+k8s/
+        ↓
+Kubernetes application
+```
+
 ## Local development networking lesson
 
 The Dev Container initially attempted to reach MLflow at `localhost:5000`, which failed because `localhost` referred to the Dev Container itself.
@@ -340,19 +408,25 @@ Killercoda's disposable session expired after the available session window, so t
 
 This is intentional rather than a failure of the repository state.
 
+The bootstrap itself has not yet been executed in a fresh Killercoda session after being committed. That is the next infrastructure validation.
+
 The next session should verify:
 
 ```text
-GitHub Actions
-   ↓
-GHCR image
-   ↓
-Flux sees manifest revision
-   ↓
-Kubernetes rollout
-   ↓
+bash scripts/bootstrap-killercoda.sh
+        ↓
+Flux Ready
+        ↓
+GitRepository Ready
+        ↓
+Kustomization Ready
+        ↓
+API Deployment Ready
+        ↓
+GHCR image pulled
+        ↓
 GET /model-info
-   ↓
+        ↓
 model version/run ID matches the model promoted by CI
 ```
 
@@ -362,7 +436,7 @@ model version/run ID matches the model promoted by CI
 
 Do not add more infrastructure first.
 
-Start a fresh disposable Kubernetes session and verify:
+Start a fresh disposable Kubernetes session and run the one-shot bootstrap. Then verify:
 
 1. Flux controllers are Ready.
 2. Flux can authenticate to the private repository.
