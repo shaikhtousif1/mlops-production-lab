@@ -1,8 +1,22 @@
 {
     "name": "MLOps Production Lab",
+
     "build": {
         "dockerfile": "Dockerfile"
     },
+
     "workspaceFolder": "/workspace",
-    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind"
+
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+
+    "runArgs": [
+        "--network=mlops-production-lab_default",
+        "--mount=type=volume,source=mlops-production-lab_mlflow_artifacts,target=/mlartifacts"
+    ],
+
+    "containerEnv": {
+        "MLFLOW_TRACKING_URI": "http://mlflow:5000"
+    },
+
+    "postCreateCommand": "pip install -r requirements.txt"
 }
