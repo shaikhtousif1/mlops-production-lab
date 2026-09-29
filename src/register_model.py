@@ -1,49 +1,22 @@
-import mlflow
 import sys
-
+import mlflow
 
 MODEL_NAME = "customer-churn-model"
+RUN_ID_FILE = "/tmp/selected_run_id"
 
 
 def main():
-
-    runs = mlflow.search_runs()
-
-    # Only consider the current dataset version
-    runs = runs[
-        runs["tags.dataset_version"] == "v2"
-    ]
-
-    # Only consider runs with the required metrics
-    candidates = runs.dropna(
-        subset=[
-            "metrics.mean_f1",
-            "metrics.f1",
-            "metrics.recall",
-        ]
-    )
-
-    if candidates.empty:
-        print("No valid model candidates found")
+    try:
+        with open(RUN_ID_FILE, "r", encoding="utf-8") as file:
+            run_id = file.read().strip()
+    except FileNotFoundError:
+        print(f"Selected run file not found: {RUN_ID_FILE}")
+        print("Run select_model.py successfully before registration.")
         sys.exit(1)
 
-    # Select the same candidate that passed the quality gate
-    selected = candidates.sort_values(
-        by=[
-            "metrics.mean_f1",
-            "metrics.std_f1",
-            "metrics.recall",
-            "metrics.precision",
-        ],
-        ascending=[
-            False,
-            True,
-            False,
-            False,
-        ],
-    ).iloc[0]
-
-    run_id = selected["run_id"]
+    if not run_id:
+        print("Selected run ID is empty")
+        sys.exit(1)
 
     model_uri = f"runs:/{run_id}/model"
 
@@ -59,6 +32,9 @@ def main():
     print("\nModel successfully registered.")
     print(f"Model: {result.name}")
     print(f"Version: {result.version}")
+
+    with open("/tmp/registered_model_version", "w", encoding="utf-8") as file:
+        file.write(str(result.version))
 
 
 if __name__ == "__main__":
