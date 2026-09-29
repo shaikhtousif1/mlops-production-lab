@@ -1,0 +1,14 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: mlops-production-lab
+  namespace: mlops
+spec:
+  interval: 1m
+  path: ./k8s
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: mlops-production-lab
+  wait: true
+  timeout: 2m
