@@ -4,10 +4,14 @@ __pycache__/
 .venv/
 venv/
 
+# Generated model package artifacts
+model_metadata.json
+
 # MLflow local tracking/artifacts
 mlruns/
 mlartifacts/
 mlflow.db
+mlflow-ci.db
 
 # OS / editor
 .DS_Store
