@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: customer-churn-api
-          image: ghcr.io/shaikhtousif1/customer-churn-api:7bf3015cea465c2e565bdd951ee358c1927230f2
+          image: ghcr.io/shaikhtousif1/customer-churn-api:17a8e70702449983f6d5f01fc9b537853896c8ff
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
