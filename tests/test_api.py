@@ -12,6 +12,18 @@ def test_health_check():
     assert response.json() == {"status": "ok"}
 
 
+def test_model_info():
+    response = client.get("/model-info")
+
+    assert response.status_code == 200
+    result = response.json()
+
+    assert result["model_name"] == "customer-churn-model"
+    assert "model_version" in result
+    assert "run_id" in result
+    assert "dataset_version" in result
+
+
 def test_prediction():
     response = client.post(
         "/predict",
