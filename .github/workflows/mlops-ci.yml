@@ -43,6 +43,10 @@ jobs:
         run: |
           pytest -q
 
+      - name: Validate training data
+        run: |
+          python src/validate_data.py
+
       - name: Run training
         env:
           MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
