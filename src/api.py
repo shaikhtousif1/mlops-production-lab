@@ -8,8 +8,18 @@ app = FastAPI(title="Customer Churn Prediction API")
 
 model = joblib.load("model.pkl")
 
-with open("model_metadata.json", "r", encoding="utf-8") as file:
-    model_metadata = json.load(file)
+try:
+    with open("model_metadata.json", "r", encoding="utf-8") as file:
+        model_metadata = json.load(file)
+except FileNotFoundError:
+    # Local development can run against the checked-in model before the
+    # CI packaging step has generated deployment metadata.
+    model_metadata = {
+        "model_name": "customer-churn-model",
+        "model_version": "unknown",
+        "run_id": "unknown",
+        "dataset_version": "unknown",
+    }
 
 
 @app.get("/")
