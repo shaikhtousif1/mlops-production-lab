@@ -47,7 +47,7 @@ Run the repository bootstrap script:
 bash scripts/bootstrap-killercoda.sh
 ```
 
-The script is intended to recreate the Kubernetes/Flux lab and configure Flux to pull this private repository.
+The script recreates the Kubernetes/Flux lab, configures Flux to pull this private repository, and reconciles the application deployment.
 
 If the script asks for the GitHub PAT, provide the same PAT used for the repository clone.
 
@@ -76,9 +76,31 @@ kubectl get deployment customer-churn-api -n mlops \
   -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
 ```
 
-### 5. Test the API
+### 5. Expose the API locally in Killercoda
 
-If the bootstrap exposes or forwards the API to port 8000, test:
+The Kubernetes Service is a `ClusterIP`, so `curl http://localhost:8000` will not work until we create a local port-forward.
+
+Run the port-forward in the background:
+
+```bash
+kubectl -n mlops port-forward svc/customer-churn-api 8000:8000 >/tmp/customer-churn-api-port-forward.log 2>&1 &
+```
+
+Verify the port-forward is active:
+
+```bash
+curl http://localhost:8000/
+```
+
+If needed, inspect the port-forward log:
+
+```bash
+cat /tmp/customer-churn-api-port-forward.log
+```
+
+### 6. Test the API
+
+Health/root endpoint:
 
 ```bash
 curl "http://localhost:8000/"
@@ -94,6 +116,12 @@ Expected response format:
 
 ```json
 {"prediction":1}
+```
+
+To stop the port-forward later:
+
+```bash
+pkill -f 'kubectl.*port-forward.*customer-churn-api'
 ```
 
 ### GitOps model
