@@ -1,15 +1,25 @@
-import pandas as pd
+import json
+
 import joblib
+import pandas as pd
 from fastapi import FastAPI
 
 app = FastAPI(title="Customer Churn Prediction API")
 
 model = joblib.load("model.pkl")
 
+with open("model_metadata.json", "r", encoding="utf-8") as file:
+    model_metadata = json.load(file)
+
 
 @app.get("/")
 def health_check():
     return {"status": "ok"}
+
+
+@app.get("/model-info")
+def model_info():
+    return model_metadata
 
 
 @app.post("/predict")
