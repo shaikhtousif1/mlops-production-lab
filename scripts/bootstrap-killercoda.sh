@@ -2,7 +2,6 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO_URL="https://github.com/shaikhtousif1/mlops-production-lab"
 NAMESPACE="mlops"
 
 log() {
@@ -15,10 +14,15 @@ fail() {
 }
 
 command -v kubectl >/dev/null 2>&1 || fail "kubectl is required."
+command -v curl >/dev/null 2>&1 || fail "curl is required."
 
 if [[ -z "${GITHUB_PAT:-}" ]]; then
-  fail "GITHUB_PAT is not set. Export a GitHub PAT with read access to this private repository before running this script."
+  printf 'GitHub PAT (read access to the private repository): '
+  read -rs GITHUB_PAT
+  printf '\n'
 fi
+
+[[ -n "$GITHUB_PAT" ]] || fail "A GitHub PAT is required."
 
 log "1. Verify Kubernetes"
 kubectl cluster-info >/dev/null
@@ -30,12 +34,8 @@ if ! command -v flux >/dev/null 2>&1; then
 fi
 flux --version
 
-log "3. Install Flux controllers"
-if ! kubectl get namespace flux-system >/dev/null 2>&1; then
-  flux install
-else
-  flux install
-fi
+log "3. Install / reconcile Flux controllers"
+flux install
 kubectl -n flux-system wait --for=condition=Ready pod --all --timeout=180s
 
 log "4. Create application namespace"
@@ -53,7 +53,7 @@ kubectl apply -f "$REPO_ROOT/flux/git-repository.yaml"
 log "7. Configure Flux Kustomization"
 kubectl apply -f "$REPO_ROOT/flux/kustomization.yaml"
 
-log "8. Wait for Flux source and reconciliation"
+log "8. Reconcile Flux"
 flux reconcile source git mlops-production-lab -n "$NAMESPACE" --with-source
 flux reconcile kustomization mlops-production-lab -n "$NAMESPACE" --with-source
 
