@@ -110,6 +110,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No Kubernetes manifest changes to commit."
           else
-            git commit -m "Update image to ${{ github.sha }}"
+            git commit -m "Update image to ${{ github.sha }} [skip ci]"
             git push
           fi
