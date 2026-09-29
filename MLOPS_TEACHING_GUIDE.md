@@ -1,16 +1,62 @@
 # MLOps Production Lab — Hands-on Workbook
 
-This workbook is the executable version of the lab. Another engineer should be able to clone the repository, follow the checkpoints, validate each result, and understand **why** each step exists.
-
-The project is a small customer-churn prediction system, but the real subject is the MLOps lifecycle:
+This workbook is the executable learning path for the repository. The project is a small customer-churn prediction system, but the real subject is the MLOps lifecycle:
 
 ```text
-Data → Train → Evaluate → Track → Select → Register → Test → Package → Publish → Deploy → Automate
+Data → Train → Evaluate → Track → Select → Register → Promote → Package → Publish → Deploy → Reconcile
 ```
+
+The learner already has strong AWS/Azure, Kubernetes, Docker, Terraform, CI/CD and FluxCD experience. Therefore this workbook focuses on the ML-specific reasoning, model lifecycle, artifact lineage and production delivery boundaries rather than reteaching basic infrastructure.
 
 ---
 
-# 0. Prerequisites
+# 0. Current checkpoint
+
+As of 2026-09-29 the lab has reached the **model promotion → packaging → immutable image → GitOps** stage.
+
+Current architecture:
+
+```text
+Dataset v2
+   ↓
+train.py
+   ↓
+MLflow run
+   ↓
+select_model.py
+   ↓
+Quality gate
+   ↓
+register_model.py
+   ↓
+MLflow model version
+   ↓
+promote_model.py
+   ↓
+production alias
+   ↓
+package_model.py
+   ↓
+model.pkl + model_metadata.json
+   ↓
+Docker image
+   ↓
+GHCR
+   ↓
+k8s/deployment.yaml
+   ↓
+FluxCD
+   ↓
+Kubernetes
+   ↓
+FastAPI
+```
+
+The next learning task is to prove that the model reported by the running Kubernetes API is the same model that CI promoted.
+
+---
+
+# 1. Prerequisites
 
 You need:
 
@@ -18,95 +64,98 @@ You need:
 - VS Code
 - VS Code Dev Containers extension
 - Docker Desktop with WSL2 integration
-- Python 3.11 if running outside the Dev Container
-- `kubectl` for Kubernetes practice
-- a Kubernetes cluster you can dispose of after the exercise
+- Python 3.11
+- `kubectl`
+- a disposable Kubernetes cluster
 - a GitHub account
 
-Cloud resources are **not required** for this workbook.
-
-The lab intentionally uses disposable Kubernetes environments so the learner can practice deployment without maintaining AWS EKS or Azure AKS.
+Cloud resources are not required. Disposable Kubernetes is sufficient for the current stage.
 
 ---
 
-# 1. Clone and open the project
-
-```bash
-git clone https://github.com/shaikhtousif1/mlops-production-lab.git
-cd mlops-production-lab
-```
-
-Open the folder in VS Code and reopen it in the Dev Container.
-
-Verify:
-
-```bash
-python --version
-git --version
-```
-
-Expected Python:
-
-```text
-Python 3.11.x
-```
-
----
-
-# 2. Understand the repository
+# 2. Repository map
 
 Important paths:
 
 ```text
 mlops-production-lab/
 ├── .github/workflows/mlops-ci.yml   # CI pipeline
-├── data/                             # datasets
-├── k8s/                              # Kubernetes manifests
-├── mlflow/                           # MLflow server image
+├── .devcontainer/                   # reproducible local environment
+├── data/                             # dataset
+├── k8s/                              # Kubernetes desired state
+├── mlflow/                           # MLflow server image/config
 ├── src/
-│   ├── generate_data.py              # dataset generator
-│   ├── train.py                      # training + MLflow logging
-│   ├── select_model.py               # model quality gate
-│   ├── register_model.py             # registry
-│   ├── predict.py                    # prediction script
-│   └── api.py                        # FastAPI serving
+│   ├── generate_data.py
+│   ├── validate_data.py
+│   ├── train.py
+│   ├── select_model.py
+│   ├── register_model.py
+│   ├── promote_model.py
+│   ├── package_model.py
+│   ├── predict.py
+│   └── api.py
 ├── tests/
-│   ├── test_api.py
-│   └── test_model.py
 ├── Dockerfile
 ├── docker-compose.yml
 ├── pytest.ini
 ├── requirements.txt
-└── PROGRESS.md
+├── PROGRESS.md
+└── MLOPS_TEACHING_GUIDE.md
 ```
 
-Before doing anything else:
+Before changing anything:
 
 ```bash
 git status
+git log -3 --oneline
 ```
 
-The working tree should normally be clean.
+The repository is the source of truth if it differs from an old conversation command.
 
 ---
 
-# 3. Generate the dataset
+# 3. Reproducible development environment
 
-Run:
+The Dev Container now joins the Docker Compose network and installs Python dependencies automatically.
 
-```bash
-python src/generate_data.py
+Relevant configuration:
+
+```text
+network: mlops-production-lab_default
+MLFLOW_TRACKING_URI=http://mlflow:5000
+/mlartifacts → Compose MLflow artifact volume
+postCreateCommand → pip install -r requirements.txt
 ```
 
-The generator uses a fixed seed so the dataset is reproducible.
-
-Inspect it:
+Validate:
 
 ```bash
-head data/customers.csv
+python -c "import pandas, mlflow, sklearn; print('Dependencies OK')"
+curl http://mlflow:5000/health
 ```
 
-The dataset contains:
+Expected:
+
+```text
+Dependencies OK
+OK
+```
+
+Why this matters:
+
+`localhost` inside the Dev Container is the Dev Container itself. Docker Compose service discovery gives us the correct production-like network boundary:
+
+```text
+Dev Container → mlflow:5000 → MLflow container
+```
+
+---
+
+# 4. Dataset and validation
+
+The project uses reproducible synthetic customer-churn Dataset v2.
+
+Columns:
 
 ```text
 age
@@ -117,17 +166,26 @@ usage_hours
 churned
 ```
 
-Why synthetic data?
+Validate the normal dataset:
 
-Because the goal is to learn the engineering lifecycle without requiring a real customer dataset.
+```bash
+python src/validate_data.py
+```
 
-Why not use the original tiny dataset?
+The validator checks schema and value constraints.
 
-The original 20-row dataset made several configurations look almost perfect, which removed the interesting model-selection problem. Dataset v2 introduces enough overlap/noise to make evaluation imperfect and therefore useful.
+The negative-path validation has also been exercised with an invalid age and correctly returned:
+
+```text
+VALIDATION FAILED
+- Column 'age' contains values outside 0-120
+```
+
+This is important because production ML pipelines must fail before training when the input contract is broken.
 
 ---
 
-# 4. Train one experiment
+# 5. Train an experiment
 
 Run:
 
@@ -135,55 +193,41 @@ Run:
 python src/train.py --c 0.1
 ```
 
-The training workflow performs:
+Training performs:
 
 1. dataset loading
 2. train/test split
 3. 5-fold cross-validation
 4. model training
-5. prediction
-6. metric calculation
-7. MLflow parameter/metric logging
-8. MLflow model logging
+5. predictions
+6. classification metrics
+7. ROC-AUC calculation
+8. MLflow parameter/metric logging
+9. MLflow model logging
 
-Key distinction:
-
-```python
-predictions = model.predict(X_test)
-probabilities = model.predict_proba(X_test)[:, 1]
-```
-
-Use hard predictions for classification metrics. Use probabilities for ROC-AUC.
-
----
-
-# 5. Run multiple experiments
-
-The important parameter is Logistic Regression `C`.
-
-Run:
-
-```bash
-python src/train.py --c 0.01
-python src/train.py --c 0.1
-python src/train.py --c 1
-python src/train.py --c 10
-python src/train.py --c 100
-```
-
-The point is not to memorize Logistic Regression. The point is to create multiple reproducible experiments that can be compared.
-
-The project records the dataset version as an MLflow tag:
+The training code records:
 
 ```python
 mlflow.set_tag("dataset_version", "v2")
 ```
 
-This prevents old Dataset v1 runs from being accidentally selected.
+This gives the model-selection stage dataset lineage.
+
+The current observed `C=0.1` metrics are approximately:
+
+```text
+Accuracy   0.65
+Mean CV F1 0.6187
+CV F1 Std  0.0436
+Test F1    0.6243
+Recall     0.6211
+Precision  0.6277
+ROC-AUC    0.7133
+```
 
 ---
 
-# 6. Understand model selection
+# 6. Model selection and quality gate
 
 Run:
 
@@ -191,22 +235,28 @@ Run:
 python src/select_model.py
 ```
 
-The selector applies a deterministic policy:
+Selection is deterministic:
 
 ```text
 1. dataset_version=v2
-2. complete runs only
+2. complete metric set
 3. highest mean CV F1
 4. lowest CV F1 standard deviation
 5. highest recall
 6. highest precision
 ```
 
-Why not repeatedly select using test F1?
+The quality gate currently requires:
 
-Because the final test set can become an implicit tuning dataset.
+```text
+Mean CV F1 >= 0.60
+Test F1    >= 0.60
+Recall     >= 0.60
+```
 
-The intended flow is:
+The selected candidate passed all three checks.
+
+Why the test set is not the primary tuning signal:
 
 ```text
 Training data
@@ -218,9 +268,11 @@ Model selection
 Final test evaluation
 ```
 
+Otherwise the final test set gradually becomes another training/tuning dataset.
+
 ---
 
-# 7. Understand MLflow Model Registry
+# 7. Model Registry and promotion
 
 Register the selected model:
 
@@ -228,43 +280,85 @@ Register the selected model:
 python src/register_model.py
 ```
 
-The project uses the registered model name:
+Model name:
 
 ```text
 customer-churn-model
 ```
 
-The working checkpoint has version 1 with the `production` alias.
-
-You can inspect it through the MLflow UI when the Compose stack is running, or with the MLflow client.
-
-Important mental model:
+The latest manually validated registration created version 2 from run:
 
 ```text
-Experiment run
-    ≠
-Model version
-    ≠
+ba05e5087dd848ec844f5d5598d2f2dc
+```
+
+Promote it:
+
+```bash
+python src/promote_model.py
+```
+
+Verify:
+
+```bash
+python - <<'PY'
+from mlflow import MlflowClient
+client = MlflowClient()
+v = client.get_model_version_by_alias("customer-churn-model", "production")
+print("Production version:", v.version)
+print("Run ID:", v.run_id)
+print("Aliases:", list(v.aliases))
+PY
+```
+
+The validated result was:
+
+```text
+Production version: 2
+Run ID: ba05e5087dd848ec844f5d5598d2f2dc
+Aliases: ['production']
+```
+
+Critical mental model:
+
+```text
+MLflow run
+   ≠
+registered model version
+   ≠
+production alias
+   ≠
 Docker image
 ```
 
-They are related, but they solve different problems.
+Promotion is the explicit link between registry state and what should be packaged for serving.
 
 ---
 
-# 8. Run the local API
+# 8. Package the promoted model
 
-The API currently packages `model.pkl` directly into the container image.
+`src/package_model.py` resolves:
 
-This is deliberate because the local MLflow artifact-storage path proved unnecessarily distracting for this learning objective.
+```text
+models:/customer-churn-model@production
+```
 
-The model is created by training with:
+and loads the exact model currently pointed to by the production alias.
+
+It creates:
+
+```text
+model.pkl
+model_metadata.json
+```
+
+`model.pkl` is serialized with `joblib` because `train.py` creates the serving artifact with:
 
 ```python
 joblib.dump(model, "model.pkl")
 ```
 
-and served with:
+Therefore the API uses:
 
 ```python
 joblib.load("model.pkl")
@@ -276,545 +370,520 @@ Do not use:
 mlflow.pyfunc.load_model("model.pkl")
 ```
 
-because `model.pkl` is a joblib artifact, not an MLflow model directory.
+because `model.pkl` is not an MLflow model directory.
+
+The metadata file records:
+
+```text
+model_name
+model_version
+run_id
+dataset_version
+```
+
+This gives the Docker image model lineage.
 
 ---
 
-# 9. Run API tests
+# 9. API and model lineage
 
-Run the complete test suite:
-
-```bash
-pytest -v
-```
-
-Expected:
+The API serves the packaged model:
 
 ```text
-3 passed
+model.pkl → FastAPI
 ```
 
-The tests cover:
+Endpoints:
 
 ```text
-GET /
+GET  /
+GET  /model-info
 POST /predict
-model.pkl loading + prediction
 ```
 
-If you see:
+`/model-info` returns the model lineage embedded by CI.
 
-```text
-ModuleNotFoundError: No module named 'src'
-```
+The important production question is no longer just:
 
-make sure `pytest.ini` contains:
+> Is the API healthy?
 
-```ini
-[pytest]
-pythonpath = .
-testpaths = tests
-```
+It is also:
 
-Then rerun:
+> Which exact model is this API serving?
+
+That is why `/model-info` exists.
+
+---
+
+# 10. Tests
+
+Run:
 
 ```bash
 pytest -v
 ```
 
----
-
-# 10. Run the API with Docker Compose
-
-Start the stack:
-
-```bash
-docker compose up -d
-```
-
-Check service health:
-
-```bash
-docker compose ps -a
-```
-
-If anything is not running:
-
-```bash
-docker compose logs <service>
-```
-
-The Compose architecture is:
+The latest locally observed suite was:
 
 ```text
-PostgreSQL
-    ↓
-MLflow
-    ↓
-FastAPI
+10 passed, 1 warning
 ```
 
-Check the API:
+The warning was a Starlette/httpx deprecation warning and did not fail the tests.
 
-```bash
-curl http://localhost:8000/
-```
+The test suite covers API behavior, model prediction and data-validation behavior.
 
-Expected:
-
-```json
-{"status":"ok"}
-```
-
-Run prediction:
-
-```bash
-curl -X POST "http://localhost:8000/predict?age=45&tenure_months=24&monthly_charges=80&support_tickets=2&usage_hours=150"
-```
-
-Expected shape:
-
-```json
-{"prediction":1}
-```
-
-The exact prediction is model/data dependent; the important contract is that the endpoint returns a valid class.
+The pipeline also compiles the important Python modules before running the workflow.
 
 ---
 
-# 11. Build the production-style API image
+# 11. CI pipeline
 
-```bash
-docker compose build api
-```
-
-The root Dockerfile does the important packaging work:
-
-```dockerfile
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY model.pkl .
-COPY src ./src
-```
-
-The resulting image contains everything required to run the API.
-
-This is the first important production-style boundary:
+The current GitHub Actions workflow is:
 
 ```text
-Developer workspace
-       ↓
-Portable container image
+Checkout
+   ↓
+Python 3.11
+   ↓
+Install requirements
+   ↓
+py_compile
+   ↓
+Validate training data
+   ↓
+Train
+   ↓
+Quality gate / select
+   ↓
+Register
+   ↓
+Promote production alias
+   ↓
+Package promoted model
+   ↓
+pytest
+   ↓
+GHCR login
+   ↓
+Docker build + push
+   ↓
+Update Kubernetes image tag
+   ↓
+Commit desired state with [skip ci]
 ```
+
+The CI MLflow backend is intentionally ephemeral:
+
+```text
+sqlite:///mlflow-ci.db
+```
+
+This is sufficient to prove the lifecycle in the learning lab. Production would use durable MLflow metadata and durable artifact storage.
+
+The `[skip ci]` on the generated Kubernetes manifest commit prevents this deployment-state commit from recursively triggering another training/build cycle.
 
 ---
 
-# 12. Publish the image to GHCR
+# 12. Container image
 
-The GitHub Actions workflow publishes:
+CI publishes:
 
 ```text
 ghcr.io/<owner>/customer-churn-api:<git-sha>
 ghcr.io/<owner>/customer-churn-api:latest
 ```
 
-The package must be readable by the Kubernetes environment. For a disposable public-learning environment, making the GHCR package public is the simplest option.
+The immutable Git-SHA tag is the deployment reference.
 
-Verify from another environment:
-
-```bash
-docker pull ghcr.io/<owner>/customer-churn-api:latest
-```
-
-If the pull works without credentials, the package is public/readable.
-
----
-
-# 13. Prepare Kubernetes
-
-Use a disposable Kubernetes cluster.
-
-Verify access:
-
-```bash
-kubectl config get-contexts
-kubectl get nodes
-```
-
-You need at least one node in `Ready` state.
-
-Do not create AWS EKS or Azure AKS just for this workbook. The objective here is Kubernetes deployment mechanics.
-
----
-
-# 14. Deploy the API
-
-Inspect the manifests:
-
-```bash
-cat k8s/deployment.yaml
-cat k8s/service.yaml
-```
-
-Apply them:
-
-```bash
-kubectl apply -f k8s/
-```
-
-Check:
-
-```bash
-kubectl get deployments
-kubectl get pods
-kubectl get services
-```
-
-Wait until:
+The important lineage is:
 
 ```text
-customer-churn-api   1/1
+Git commit
+   ↓
+CI run
+   ↓
+MLflow model version
+   ↓
+model.pkl
+   ↓
+Docker image tagged with Git SHA
 ```
 
-If the pod is stuck:
-
-```bash
-kubectl describe pod <pod-name>
-kubectl logs <pod-name>
-```
+`latest` is retained as a convenience tag but should not be the Kubernetes desired-state reference.
 
 ---
 
-# 15. Understand the local-image trap
+# 13. Kubernetes deployment
 
-On Docker Desktop Kubernetes, an image built in Docker Desktop may not automatically be available to Kubernetes depending on the runtime configuration.
-
-A common disposable-lab symptom is:
+The deployment uses:
 
 ```text
-ErrImageNeverPull
+Deployment: customer-churn-api
+replicas: 1
+containerPort: 8000
 ```
 
-If using:
+Probes:
+
+```text
+readiness → GET /
+liveness  → GET /
+```
+
+Resources:
+
+```text
+requests: 100m CPU / 128Mi
+limits:   500m CPU / 512Mi
+```
+
+The current desired-state manifest uses an immutable GHCR Git-SHA image.
+
+The last verified Killercoda image was:
+
+```text
+ghcr.io/shaikhtousif1/customer-churn-api:17a8e70702449983f6d5f01fc9b537853896c8ff
+```
+
+The image was successfully pulled and the API pod reached Ready.
+
+---
+
+# 14. FluxCD GitOps
+
+Flux has now been introduced.
+
+The disposable Killercoda cluster had these controllers Ready:
+
+```text
+helm-controller
+kustomize-controller
+notification-controller
+source-controller
+```
+
+A Kubernetes secret was created for the private GitHub repository and referenced by a Flux `GitRepository`.
+
+Flux successfully reported the repository source as Ready and the Kustomization applied the repository revision.
+
+The important flow is:
+
+```text
+Git repository
+      ↓
+Flux GitRepository
+      ↓
+Flux Kustomization
+      ↓
+Kubernetes desired state
+      ↓
+Deployment
+      ↓
+Pod
+```
+
+This is different from CI directly running `kubectl apply`.
+
+CI publishes the artifact and updates desired state.
+Flux is responsible for reconciliation.
+
+---
+
+# 15. Why the Kubernetes manifest changes when the image changes
+
+Suppose CI produces:
+
+```text
+customer-churn-api:ABC123
+```
+
+The GitOps repository records:
 
 ```yaml
-imagePullPolicy: Never
+image: ghcr.io/.../customer-churn-api:ABC123
 ```
 
-Kubernetes expects the image to already exist in its container runtime.
+Flux notices the Git change and reconciles Kubernetes.
 
-For the disposable online cluster, avoid this problem by pulling the GHCR image directly.
-
-This is a useful lesson:
+That gives us an auditable promotion chain:
 
 ```text
-Docker image on my laptop
-        ≠
-Docker image available to Kubernetes
+Model promoted
+      ↓
+Model packaged
+      ↓
+Image built
+      ↓
+Image identified by Git SHA
+      ↓
+Kubernetes desired state updated
+      ↓
+Flux reconciles
 ```
 
-A registry creates the distribution boundary.
+The Git commit is the deployment intent. The immutable image tag is the artifact identity.
 
 ---
 
-# 16. Validate the Kubernetes service
+# 16. Next validation: prove model-to-production lineage
 
-Port-forward:
+Killercoda's disposable session expired before the final packaging changes could be revalidated end-to-end.
+
+When a new session is available:
+
+### A. Verify Flux
 
 ```bash
-kubectl port-forward service/customer-churn-api 8001:8000
+flux get sources git -n mlops
+flux get kustomizations -n mlops
 ```
 
-In another terminal:
+### B. Verify workload
 
 ```bash
-curl http://localhost:8001/
+kubectl get deployment,pods,svc -n mlops
+kubectl get deployment customer-churn-api -n mlops \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
 ```
 
-Expected:
+### C. Verify application
 
-```json
-{"status":"ok"}
-```
-
-Then:
+Use the service/port-forward or the available cluster access and test:
 
 ```bash
-curl -X POST "http://localhost:8001/predict?age=45&tenure_months=24&monthly_charges=80&support_tickets=2&usage_hours=150"
+curl http://localhost:8000/
+curl -X POST "http://localhost:8000/predict?age=45&tenure_months=24&monthly_charges=80&support_tickets=2&usage_hours=150"
+curl http://localhost:8000/model-info
 ```
 
-Expected shape:
+### D. Prove lineage
 
-```json
-{"prediction":1}
-```
-
-At this point you have proven:
+Compare:
 
 ```text
-GHCR
-  ↓
-Kubernetes
-  ↓
-Pod
-  ↓
-FastAPI
-  ↓
-Model
-  ↓
-Prediction
+CI-promoted MLflow version/run
+          ↕
+/model-info from Kubernetes
 ```
+
+The model version and run ID should match.
+
+That is the next definition-of-done checkpoint.
 
 ---
 
-# 17. Understand the current CI pipeline
+# 17. Known failures and lessons
 
-Open:
+## MLflow artifact failure
 
-```text
-.github/workflows/mlops-ci.yml
-```
+A registered model can exist without the serving environment being able to access its artifact.
 
-The current pipeline is:
+Lesson:
 
 ```text
-Checkout
-  ↓
-Python setup
-  ↓
-Install dependencies
-  ↓
-Syntax validation
-  ↓
-pytest
-  ↓
-Training
-  ↓
-Quality gate
-  ↓
-Model registration
-  ↓
-GHCR login
-  ↓
-Docker build + push
+Registry metadata ≠ artifact availability
 ```
 
-The pipeline already tests the application before publishing the image.
+The lab therefore uses a controlled packaging step rather than making the API depend on live MLflow artifact access.
 
-That is the current CI boundary.
+## Dev Container localhost failure
 
----
+`localhost:5000` inside the Dev Container was not the MLflow service.
 
-# 18. What we deliberately skip
-
-Do not spend time implementing these before the next milestone:
-
-- AWS EKS
-- Azure AKS
-- MinIO
-- LocalStack
-- production secrets management
-- elaborate local artifact-storage infrastructure
-
-Those are real production topics, but they do not need to block the current learning objective.
-
-The disposable Kubernetes environment is enough.
-
----
-
-# 19. Next hands-on milestone: CI-driven deployment
-
-The next exercise is to extend the existing pipeline from:
+Lesson:
 
 ```text
-Build → Push
+localhost is namespace-local
+Docker service DNS is the correct network boundary
 ```
 
-to:
+## `/mlartifacts` permission failure
+
+The mounted volume was initially owned by root, while the Dev Container ran as `vscode`.
+
+After correcting ownership, MLflow successfully logged model artifacts.
+
+Lesson:
 
 ```text
-Build
-  ↓
-Push GHCR
-  ↓
-Deploy Kubernetes
-  ↓
-Wait for rollout
-  ↓
-Run smoke test
+A shared Docker volume still needs correct filesystem ownership/permissions.
 ```
 
-The first version should deploy the immutable Git-SHA image, not `latest`.
+## Wrong model loader
 
-Target flow:
+`model.pkl` was initially confused with an MLflow model directory.
 
-```text
-Git push
-   ↓
-GitHub Actions
-   ↓
-pytest
-   ↓
-quality gate
-   ↓
-Docker build
-   ↓
-GHCR
-   ↓
-kubectl set image / manifest update
-   ↓
-rollout status
-   ↓
-API smoke test
-```
-
-Only after this works should GitOps be introduced.
-
----
-
-# 20. GitOps milestone
-
-After CI-driven deployment works, move deployment responsibility into Git:
-
-```text
-Application repository
-        ↓
-Deployment configuration
-        ↓
-FluxCD
-        ↓
-Kubernetes
-```
-
-The key lesson will be the difference between:
-
-```text
-CI = build / test / publish
-CD = deploy
-GitOps = desired state stored in Git + reconciliation
-```
-
----
-
-# 21. Production evolution
-
-The final learning path is:
-
-```text
-Python training
-      ↓
-MLflow
-      ↓
-Model Registry
-      ↓
-FastAPI
-      ↓
-Docker
-      ↓
-GHCR
-      ↓
-Kubernetes
-      ↓
-CI/CD
-      ↓
-FluxCD
-      ↓
-Observability
-      ↓
-Drift detection
-      ↓
-Retraining
-      ↓
-Promotion / rollback
-      ↓
-AWS EKS / Azure AKS
-```
-
-The cloud comes last because the same deployment concepts can be learned without paying for infrastructure.
-
----
-
-# 22. Troubleshooting cheat sheet
-
-### `ModuleNotFoundError: No module named 'src'`
-
-Run from repository root and ensure `pytest.ini` contains:
-
-```ini
-[pytest]
-pythonpath = .
-testpaths = tests
-```
-
-### `Could not find an MLmodel configuration file`
-
-You tried to load a joblib `.pkl` file with MLflow PyFunc. Use:
+Correct:
 
 ```python
 joblib.load("model.pkl")
 ```
 
-### `STACK_GLOBAL requires str`
+Lesson: inspect the serialization mechanism before selecting the loader.
 
-Same root cause: the file is joblib/pickle data and should be loaded with joblib.
+## Local Docker image vs Kubernetes runtime
 
-### API container exits
+An image on the developer machine is not automatically an image in another Kubernetes runtime.
 
-```bash
-docker compose logs api --tail=50
-```
-
-### Kubernetes `ErrImageNeverPull`
-
-The Kubernetes runtime does not have the local image. Push/pull through a registry or import the image into the correct runtime.
-
-### Kubernetes pod pending
-
-```bash
-kubectl describe pod <pod-name>
-```
-
-### Kubernetes API test
-
-```bash
-kubectl port-forward service/customer-churn-api 8001:8000
-curl http://localhost:8001/
-```
-
----
-
-# 23. Definition of done for the current phase
-
-You are finished with the current phase when all of these are true:
+Lesson:
 
 ```text
-[x] pytest -v → 3 passed
-[x] API runs in Docker
-[x] image exists in GHCR
-[x] Kubernetes pod is Running
-[x] readiness/liveness probes pass
-[x] / returns 200
-[x] /predict returns a valid prediction
-[x] CI builds and publishes the image
+Build environment
+   ≠
+Kubernetes runtime
+   ≠
+Registry
 ```
 
-Then stop adding infrastructure.
-
-The next task is CI-driven Kubernetes deployment.
+GHCR provides the portable distribution boundary.
 
 ---
 
-# 24. Engineering questions to ask at every step
+# 18. What not to do yet
 
-For every tool introduced, answer:
+Do not add these before completing model-to-production lineage validation:
+
+- AWS EKS
+- Azure AKS
+- MinIO
+- LocalStack
+- elaborate secrets infrastructure
+- advanced model serving platforms
+
+Those are valid production topics, but they do not solve the current unfinished learning objective.
+
+---
+
+# 19. Next learning milestones
+
+### Milestone 1 — current next task
+
+```text
+CI-promoted model
+   ↓
+GHCR image
+   ↓
+Flux
+   ↓
+Kubernetes
+   ↓
+/model-info
+   ↓
+prove exact model lineage
+```
+
+### Milestone 2
+
+Rollback:
+
+```text
+Current image
+   ↓
+previous Git-SHA image
+   ↓
+Flux reconciliation
+   ↓
+verify API
+```
+
+### Milestone 3
+
+Observability:
+
+```text
+API metrics
+Kubernetes metrics
+request latency
+error rate
+prediction volume
+```
+
+### Milestone 4
+
+MLOps-specific monitoring:
+
+```text
+input drift
+prediction drift
+model performance
+training data quality
+```
+
+### Milestone 5
+
+Retraining and promotion:
+
+```text
+new data
+   ↓
+validation
+   ↓
+training
+   ↓
+quality gate
+   ↓
+registry
+   ↓
+promotion
+   ↓
+package
+   ↓
+image
+   ↓
+GitOps
+```
+
+### Milestone 6
+
+Production cloud architecture:
+
+```text
+AWS EKS / Azure AKS
++ durable MLflow backend
++ object storage
++ secrets
++ observability
++ rollback
++ governance
+```
+
+Cloud comes after the lifecycle is understood in the disposable environment.
+
+---
+
+# 20. Engineering questions
+
+For every new component ask:
 
 1. What problem does it solve?
 2. Why was the previous approach insufficient?
 3. Where does state live?
 4. How is the workload validated?
-5. What happens when the process/container/node disappears?
+5. What happens if the process/container/node disappears?
 6. How would this change in AWS or Azure?
-7. How would this be automated?
-8. How would we roll it back?
+7. How is it automated?
+8. How is it rolled back?
+9. How do we prove which model is serving?
+10. How do we know the model/data is still behaving correctly?
 
-That is the core of the workbook: **do the task, understand the failure mode, then connect it to the production equivalent.**
+The objective is not to memorize commands. It is to develop the production MLOps mental model behind the commands.
+
+---
+
+# 21. Session-start protocol
+
+At the beginning of a new session:
+
+```text
+1. Read PROGRESS.md.
+2. Read this workbook.
+3. Inspect the current GitHub tree.
+4. Check the latest commit.
+5. Check the latest CI result.
+6. Identify the first unfinished milestone.
+7. State the checkpoint briefly.
+8. Give only the commands needed for that checkpoint.
+```
+
+Never assume an old chat command is still correct when the repository has changed.
