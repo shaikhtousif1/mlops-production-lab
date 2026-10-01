@@ -14,10 +14,15 @@ spec:
     metadata:
       labels:
         app: customer-churn-api
+      annotations:
+        mlops/model-version: "MODEL_VERSION"
+        mlops/run-id: "MODEL_RUN_ID"
+        mlops/dataset-version: "DATASET_VERSION"
+        mlops/source-commit: "IMAGE_TAG"
     spec:
       containers:
         - name: customer-churn-api
-          image: ghcr.io/shaikhtousif1/customer-churn-api:17a8e70702449983f6d5f01fc9b537853896c8ff
+          image: ghcr.io/shaikhtousif1/customer-churn-api:IMAGE_TAG
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
