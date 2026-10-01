@@ -87,10 +87,10 @@ jobs:
           MODEL_RUN_ID=$(python -c "import json; print(json.load(open('model_metadata.json'))['run_id'])")
           DATASET_VERSION=$(python -c "import json; print(json.load(open('model_metadata.json'))['dataset_version'])")
 
-          sed -i "s/IMAGE_TAG/${{ github.sha }}/g" k8s/deployment.yaml
-          sed -i "s/MODEL_VERSION/${MODEL_VERSION}/g" k8s/deployment.yaml
-          sed -i "s/MODEL_RUN_ID/${MODEL_RUN_ID}/g" k8s/deployment.yaml
-          sed -i "s/DATASET_VERSION/${DATASET_VERSION}/g" k8s/deployment.yaml
+          sed -i "s|ghcr.io/${{ github.repository_owner }}/customer-churn-api:.*|ghcr.io/${{ github.repository_owner }}/customer-churn-api:${{ github.sha }}|" k8s/deployment.yaml
+          sed -i "s|mlops/model-version:.*|mlops/model-version: \"${MODEL_VERSION}\"|" k8s/deployment.yaml
+          sed -i "s|mlops/run-id:.*|mlops/run-id: \"${MODEL_RUN_ID}\"|" k8s/deployment.yaml
+          sed -i "s|mlops/dataset-version:.*|mlops/dataset-version: \"${DATASET_VERSION}\"|" k8s/deployment.yaml
 
           echo "Deployment lineage:"
           grep 'mlops/' k8s/deployment.yaml
