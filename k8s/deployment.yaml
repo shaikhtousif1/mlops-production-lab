@@ -15,14 +15,14 @@ spec:
       labels:
         app: customer-churn-api
       annotations:
-        mlops/model-version: "2"
-        mlops/run-id: "7254bb29563c4ddb806a39a15c70a32c"
+        mlops/model-version: "4"
+        mlops/run-id: "abce7c2107aa45d6bc7e3423dde1f0ff"
         mlops/dataset-version: "v2"
         mlops/source-commit: "e6306bf499f0ca93fb27b7f9891385bf55739bec"
     spec:
       containers:
         - name: customer-churn-api
-          image: ghcr.io/shaikhtousif1/customer-churn-api:c710c55d95b9615997198f8d909cbcf068d0bd84
+          image: ghcr.io/shaikhtousif1/customer-churn-api:e44339e92b825b80c8770fe5ee3b60e2e29ceb88
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
