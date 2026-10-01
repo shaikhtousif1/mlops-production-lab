@@ -19,7 +19,8 @@ def test_model_info():
     result = response.json()
 
     assert result["model_name"] == "customer-churn-model"
-    assert "model_version" in result
+    assert "model_release_version" in result
+    assert "mlflow_model_version" in result
     assert "run_id" in result
     assert "dataset_version" in result
 
