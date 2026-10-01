@@ -1,8 +1,10 @@
 import json
+import os
 import sys
 
 import joblib
 import mlflow
+from huggingface_hub import HfApi
 from mlflow import MlflowClient
 
 MODEL_NAME = "customer-churn-model"
@@ -38,11 +40,12 @@ def main():
 
     # Keep immutable lineage metadata alongside the packaged model.
     run = client.get_run(run_id)
+    dataset_version = run.data.tags.get("dataset_version")
     metadata = {
         "model_name": MODEL_NAME,
         "model_version": model_version,
         "run_id": run_id,
-        "dataset_version": run.data.tags.get("dataset_version"),
+        "dataset_version": dataset_version,
     }
 
     with open(MODEL_METADATA_OUTPUT, "w", encoding="utf-8") as file:
@@ -51,6 +54,41 @@ def main():
 
     print(f"Packaged model written to: {MODEL_OUTPUT}")
     print(f"Model metadata written to: {MODEL_METADATA_OUTPUT}")
+
+    # Publish the immutable packaged artifact to Hugging Face.
+    # The API image still contains the model, so the artifact store is not a
+    # runtime dependency; it gives us a production-style artifact lifecycle.
+    hf_repo_id = os.environ.get("HF_REPO_ID")
+    hf_token = os.environ.get("HF_TOKEN")
+
+    if not hf_repo_id or not hf_token:
+        print("HF_REPO_ID and HF_TOKEN are required to publish the model artifact.")
+        sys.exit(1)
+
+    hf_api = HfApi(token=hf_token)
+    artifact_prefix = f"versions/{model_version}"
+
+    print("\nPublishing model artifact to Hugging Face:")
+    print(f"Repository: {hf_repo_id}")
+    print(f"Path: {artifact_prefix}/")
+
+    hf_api.upload_file(
+        path_or_fileobj=MODEL_OUTPUT,
+        path_in_repo=f"{artifact_prefix}/{MODEL_OUTPUT}",
+        repo_id=hf_repo_id,
+        repo_type="model",
+        commit_message=f"Publish customer churn model v{model_version}",
+    )
+
+    hf_api.upload_file(
+        path_or_fileobj=MODEL_METADATA_OUTPUT,
+        path_in_repo=f"{artifact_prefix}/{MODEL_METADATA_OUTPUT}",
+        repo_id=hf_repo_id,
+        repo_type="model",
+        commit_message=f"Publish metadata for customer churn model v{model_version}",
+    )
+
+    print("Model artifact successfully published to Hugging Face.")
 
 
 if __name__ == "__main__":
