@@ -1,10 +1,10 @@
 # MLOps Production Lab — Progress
 
-## Checkpoint — 2026-09-29
+## Checkpoint — 2026-10-01
 
-The lab has moved beyond basic model training and API deployment into the **model promotion → packaging → immutable image → GitOps** boundary.
+Today's session moved the lab from a basic single-pipeline MLOps demo toward a more production-oriented model lifecycle.
 
-The latest repository state implements the following intended lifecycle:
+### Current end-to-end concept
 
 ```text
 Dataset
@@ -21,70 +21,25 @@ Production alias
   ↓
 Package EXACT promoted model
   ↓
-model.pkl + model_metadata.json
+Persistent model release artifact
   ↓
 Docker image
   ↓
 GHCR
   ↓
-Kubernetes desired state
+GitOps desired state
   ↓
-Flux reconciliation
+Flux
+  ↓
+Kubernetes
 ```
 
-## Current repository checkpoint
-
-The repository now also contains a **one-shot Killercoda bootstrap** so a disposable cluster can be rebuilt without manually repeating the Flux/Kubernetes setup from the previous session.
-
-Bootstrap entry point:
-
-```text
-scripts/bootstrap-killercoda.sh
-```
-
-The bootstrap is designed to be idempotent and performs:
-
-```text
-Kubernetes verification
-  ↓
-Flux CLI installation
-  ↓
-Flux controller installation/reconciliation
-  ↓
-mlops namespace
-  ↓
-GitHub authentication secret
-  ↓
-Flux GitRepository
-  ↓
-Flux Kustomization
-  ↓
-source reconciliation
-  ↓
-application reconciliation
-  ↓
-Deployment/Pod readiness verification
-```
-
-The GitOps definitions are now stored in the repository:
-
-```text
-flux/git-repository.yaml
-flux/kustomization.yaml
-k8s/namespace.yaml
-k8s/kustomization.yaml
-```
-
-The application manifests remain the source of Kubernetes desired state.
-
-## Completed
+## Completed / validated
 
 - [x] VS Code Dev Container / Python 3.11
-- [x] Dev Container automatically installs `requirements.txt`
-- [x] Dev Container joins the local Docker Compose MLflow network
-- [x] Dev Container uses `MLFLOW_TRACKING_URI=http://mlflow:5000`
-- [x] MLflow artifact volume mounted into the Dev Container for local training
-- [x] Reproducible synthetic customer-churn dataset v2
+- [x] Local Docker Compose MLflow environment
+- [x] MLflow artifact volume mounted into Dev Container
+- [x] Reproducible customer-churn dataset v2
 - [x] Logistic Regression with configurable `C`
 - [x] 5-fold cross-validation
 - [x] Accuracy / Precision / Recall / F1 / ROC-AUC
@@ -93,41 +48,175 @@ The application manifests remain the source of Kubernetes desired state.
 - [x] Deterministic model selection
 - [x] MLflow Model Registry
 - [x] `customer-churn-model` registration
-- [x] Model version 2 created from the selected run
-- [x] `production` alias verified against model version 2
-- [x] Selected run: `ba05e5087dd848ec844f5d5598d2f2dc`
-- [x] Production model verification: version `2`, run `ba05e5087dd848ec844f5d5598d2f2dc`
-- [x] FastAPI `/` and `/predict`
-- [x] FastAPI `/model-info` lineage endpoint
+- [x] Model version 2 created locally from selected run
+- [x] `production` alias verified locally against model version 2
+- [x] FastAPI `/`, `/predict`, and `/model-info`
 - [x] Dockerized API
-- [x] Docker Compose development stack
-- [x] PostgreSQL-backed MLflow metadata
-- [x] API tests and model test
-- [x] Training-data validation
-- [x] Invalid-data negative test
-- [x] CI syntax validation
-- [x] GitHub Actions quality gate
-- [x] CI model registration
-- [x] CI model promotion
-- [x] CI packaging of the promoted MLflow model
-- [x] CI tests against the packaged model
+- [x] API tests and model tests
+- [x] Training-data validation and negative tests
+- [x] GitHub Actions CI
+- [x] CI model registration and promotion
+- [x] CI packaging of the promoted model
+- [x] Hugging Face model repository configured as the learning-lab artifact store
 - [x] GHCR image build/push
 - [x] Git-SHA image tags
 - [x] Kubernetes Deployment + Service
-- [x] Kubernetes namespace and Kustomize entry point
-- [x] Readiness/liveness probes
-- [x] Resource requests/limits
-- [x] Kubernetes inference smoke test
-- [x] Flux GitRepository configured against the private GitHub repository
-- [x] Flux Kustomization successfully applied the repository revision in Killercoda
-- [x] Kubernetes successfully pulled the immutable GHCR image
-- [x] Kubernetes API prediction smoke test succeeded
-- [x] GitOps manifest commit is marked `[skip ci]` to avoid an unnecessary CI retrigger
-- [x] One-shot/idempotent Killercoda bootstrap added
+- [x] Kubernetes readiness/liveness probes
+- [x] Flux GitRepository + Kustomization
+- [x] Private GitHub authentication for Flux
+- [x] One-shot/idempotent Killercoda bootstrap
+- [x] Kubernetes prediction smoke test
+- [x] GitOps manifest updates marked `[skip ci]`
 
-## Latest validated model metrics
+## Important issue found and fixed today
 
-For the current Dataset v2 / `C=0.1` training run:
+The Hugging Face release discovery code was passing the wrong argument to `HfApi.list_repo_tree()`. The resulting exception was caught and the code incorrectly assumed that no releases existed:
+
+```text
+HfApi.list_repo_tree() got an unexpected keyword argument 'path'
+```
+
+That caused every CI packaging run to select release `1`.
+
+The code was corrected to use `path_in_repo` and now fails the pipeline if release discovery cannot be performed instead of silently resetting to release 1.
+
+The intended persistent artifact structure is:
+
+```text
+releases/1/
+  model.pkl
+  model_metadata.json
+
+releases/2/
+  model.pkl
+  model_metadata.json
+```
+
+The next CI run must be checked for:
+
+```text
+Model release version: 2
+Release path: releases/2/
+```
+
+## Versioning mental model established
+
+We clarified that these are different identifiers:
+
+```text
+MLflow model version
+    = version inside a particular MLflow registry/database
+
+Model release version
+    = persistent artifact release number in Hugging Face
+
+Docker image tag
+    = immutable Git SHA for the application build
+```
+
+The CI MLflow backend currently uses:
+
+```text
+sqlite:///mlflow-ci.db
+```
+
+Therefore each fresh GitHub Actions run has an ephemeral MLflow registry and can start at MLflow model version 1 again. This is acceptable for the learning lab; the persistent release number must come from the artifact repository.
+
+## Production architecture discussion
+
+We discussed that a production environment would normally use durable artifact/object storage such as S3, Azure Blob, or GCS instead of Hugging Face.
+
+Conceptually:
+
+```text
+MLflow
+  ↓
+tracks/registers/promotes model
+  ↓
+Durable artifact store
+  ↓
+immutable model artifact
+```
+
+S3 is not the model registry itself; it is the durable artifact layer. For this lab we intentionally avoid S3 cost and complexity.
+
+We also established the distinction between:
+
+```text
+Model rollback
+    production alias v3 → v2
+
+Application/GitOps rollback
+    Git commit B → Git commit A → Flux → Kubernetes
+```
+
+Both rollback paths will be practiced hands-on.
+
+## Pipeline architecture discussion
+
+The current CI is intentionally a single end-to-end workflow. The production-oriented target is to separate:
+
+### Model CI/CD
+
+```text
+Data
+ ↓
+Training / hyperparameter search
+ ↓
+Evaluation
+ ↓
+Quality gate
+ ↓
+Model registry
+ ↓
+Promotion
+ ↓
+Artifact storage
+```
+
+### Application CI/CD
+
+```text
+Application code
+ ↓
+Tests
+ ↓
+Docker build
+ ↓
+GHCR/ECR/etc.
+ ↓
+GitOps manifest
+ ↓
+Flux
+ ↓
+Kubernetes
+```
+
+We will implement this separation after validating the current v2 artifact release.
+
+## Hyperparameter learning note
+
+Changing `C` directly in source code is only being used to demonstrate a new model candidate. It is not the desired production retraining pattern.
+
+The production-style evolution is:
+
+```text
+Training trigger
+   ↓
+Hyperparameter search/configuration
+   ↓
+Multiple candidates
+   ↓
+Evaluation
+   ↓
+Quality gate
+   ↓
+Select candidate
+   ↓
+Promote
+```
+
+## Current model metrics from Dataset v2 / C=0.1 baseline
 
 ```text
 Mean CV F1 : 0.6187
@@ -139,7 +228,7 @@ ROC-AUC    : 0.7133
 Accuracy   : 0.65
 ```
 
-The configured quality gate requires:
+Quality gate:
 
 ```text
 Mean CV F1 >= 0.60
@@ -147,325 +236,56 @@ Test F1    >= 0.60
 Recall     >= 0.60
 ```
 
-The selected candidate passed all three checks.
+The baseline candidate passed.
 
-## Model promotion and packaging
+## Killercoda status
 
-The important new boundary is:
-
-```text
-MLflow production alias
-        ↓
-package_model.py
-        ↓
-exact promoted model
-        ↓
-model.pkl
-        ↓
-model_metadata.json
-        ↓
-Docker image
-```
-
-`src/package_model.py` resolves:
-
-```text
-models:/customer-churn-model@production
-```
-
-and writes the exact production model to `model.pkl` using `joblib`.
-
-It also records:
-
-```text
-model_name
-model_version
-run_id
-dataset_version
-```
-
-This means the API image can prove which MLflow model it contains.
-
-## API lineage
-
-`src/api.py` loads the packaged joblib artifact:
-
-```python
-joblib.load("model.pkl")
-```
-
-and exposes:
-
-```text
-GET /model-info
-```
-
-The intended response identifies the packaged model version and MLflow run.
-
-Important distinction:
-
-```text
-MLflow model
-  ≠
-model.pkl
-  ≠
-Docker image
-```
-
-They are linked through the packaging step and metadata.
-
-## CI pipeline — current design
-
-```text
-Checkout
-  ↓
-Python 3.11
-  ↓
-Install dependencies
-  ↓
-Python syntax validation
-  ↓
-Training-data validation
-  ↓
-Training
-  ↓
-Deterministic model quality gate
-  ↓
-Register model
-  ↓
-Promote model to production alias
-  ↓
-Package exact promoted model
-  ↓
-pytest
-  ↓
-GHCR login
-  ↓
-Build + push immutable Git-SHA image
-  ↓
-Update Kubernetes manifest
-  ↓
-Commit desired state with [skip ci]
-```
-
-The CI MLflow backend is intentionally ephemeral (`sqlite:///mlflow-ci.db`) for the learning lab. It exists to prove the workflow; the production equivalent would use durable tracking metadata and artifact storage.
-
-## Image and Kubernetes state
-
-The image published by CI uses:
-
-```text
-ghcr.io/shaikhtousif1/customer-churn-api:${GITHUB_SHA}
-ghcr.io/shaikhtousif1/customer-churn-api:latest
-```
-
-The Kubernetes manifest is updated to the immutable Git-SHA image rather than relying on `latest`.
-
-The last Kubernetes image verified in Killercoda was:
-
-```text
-ghcr.io/shaikhtousif1/customer-churn-api:17a8e70702449983f6d5f01fc9b537853896c8ff
-```
-
-It was successfully pulled and ran in the disposable Kubernetes cluster.
-
-## Flux / GitOps milestone
-
-Flux was installed in Killercoda and reported all four core controllers as Ready:
-
-```text
-helm-controller
-kustomize-controller
-notification-controller
-source-controller
-```
-
-A private GitHub repository secret was created in the `mlops` namespace and used by a Flux `GitRepository`.
-
-Flux reported:
-
-```text
-mlops-production-lab    main@sha1:c757703c    Ready=True
-```
-
-The Flux Kustomization then applied the repository revision and created the API Deployment/Service.
-
-The API pod successfully reached `Ready=True`, and the prediction smoke test returned:
-
-```json
-{"prediction":1}
-```
-
-This proved the basic Git → Flux → Kubernetes reconciliation path.
-
-## Killercoda bootstrap
-
-A fresh Killercoda session should now only require the repository and a GitHub PAT. From the repository root:
+The Killercoda session is disposable and has expired/was paused. The repository contains the one-shot bootstrap:
 
 ```bash
 bash scripts/bootstrap-killercoda.sh
 ```
 
-The script prompts for `GITHUB_PAT` if it is not already exported.
-
-It creates/updates the GitHub authentication secret with `kubectl apply`, so rerunning the script is safe.
-
-It installs/reconciles Flux, configures the private Git source, reconciles the Kubernetes desired state, and waits for the API Deployment and Pod to become ready.
-
-This is intentionally **not** a separate application deployment mechanism. The script bootstraps the GitOps control plane; Flux still obtains the application desired state from Git.
-
-The intended boundary is:
+The next infrastructure session should start from a fresh Killercoda environment and validate:
 
 ```text
-Killercoda bootstrap
-        ↓
-Flux control plane + credentials
-        ↓
-GitHub
-        ↓
-Flux reconciliation
-        ↓
-k8s/
-        ↓
-Kubernetes application
-```
-
-## Local development networking lesson
-
-The Dev Container initially attempted to reach MLflow at `localhost:5000`, which failed because `localhost` referred to the Dev Container itself.
-
-The final local setup uses the Docker Compose network:
-
-```text
-Dev Container
-      │
-      └── mlops-production-lab_default
-                 │
-                 └── mlflow:5000
-```
-
-The Dev Container now resolves:
-
-```text
-mlflow → 172.18.0.3
-```
-
-and:
-
-```bash
-curl http://mlflow:5000/health
-```
-
-returns:
-
-```text
-OK
-```
-
-The Dev Container also mounts the Compose MLflow artifact volume at `/mlartifacts` so locally trained MLflow models can be logged successfully.
-
-## Important serving decision
-
-The API serves the packaged joblib model rather than pulling directly from MLflow at request time:
-
-```text
-MLflow
+clone with PAT
   ↓
-package_model.py
+bootstrap-killercoda.sh
   ↓
-model.pkl
-  ↓
-Docker image
-  ↓
-FastAPI
-```
-
-This is a deliberate teaching architecture. A production platform would normally use durable artifact/object storage and a controlled model deployment mechanism.
-
-## Testing status
-
-The repository has tests for:
-
-```text
-API health
-API prediction
-model loading/prediction
-training-data validation
-invalid schema/data cases
-```
-
-The last locally observed full test result was:
-
-```text
-10 passed, 1 warning
-```
-
-The warning was a Starlette/httpx deprecation warning and did not fail the tests.
-
-## Known limitation / next validation
-
-Killercoda's disposable session expired after the available session window, so the latest CI-to-Kubernetes model-lineage flow has **not yet been revalidated end-to-end after the final packaging changes**.
-
-This is intentional rather than a failure of the repository state.
-
-The bootstrap itself has not yet been executed in a fresh Killercoda session after being committed. That is the next infrastructure validation.
-
-The next session should verify:
-
-```text
-bash scripts/bootstrap-killercoda.sh
-        ↓
 Flux Ready
-        ↓
+  ↓
 GitRepository Ready
-        ↓
+  ↓
 Kustomization Ready
-        ↓
+  ↓
 API Deployment Ready
-        ↓
-GHCR image pulled
-        ↓
+  ↓
+port-forward
+  ↓
+GET /
 GET /model-info
-        ↓
-model version/run ID matches the model promoted by CI
+POST /predict
 ```
 
-## Next exact milestone
+The README now explicitly documents the port-forward before the curl commands.
 
-### Milestone: prove model-to-production lineage
+## Next session — exact order
 
-Do not add more infrastructure first.
+1. Check the latest GitHub Actions run after the Hugging Face release-discovery fix.
+2. Confirm `releases/2/` exists in the Hugging Face model repository.
+3. Verify `model_metadata.json` for release 2.
+4. Recreate Killercoda using the one-shot bootstrap.
+5. Verify `/model-info` against the CI-promoted model lineage.
+6. Then split Model CI/CD from Application CI/CD.
+7. Perform a deliberate model rollback.
+8. Perform a deliberate GitOps/application rollback.
+9. Add observability and model/data drift.
+10. Move toward LLMOps/FDE workflows.
 
-Start a fresh disposable Kubernetes session and run the one-shot bootstrap. Then verify:
+## Project objective
 
-1. Flux controllers are Ready.
-2. Flux can authenticate to the private repository.
-3. Flux reconciles the latest Git revision.
-4. The API pod pulls the immutable GHCR image.
-5. `/` returns healthy.
-6. `/predict` returns a valid prediction.
-7. `/model-info` reports the packaged MLflow model version/run.
-8. The reported lineage matches the model promoted during CI.
-
-After that, move to:
-
-```text
-Rollback
-  ↓
-Observability
-  ↓
-Model/data drift
-  ↓
-Retraining strategy
-  ↓
-Production artifact storage
-  ↓
-AWS/Azure deployment architecture
-```
-
-## Project learning objective
-
-The lab is teaching the missing MLOps mental model around the infrastructure skills the learner already has:
+The lab is teaching the production MLOps mental model around the learner's existing DevOps/cloud skills:
 
 ```text
 ML experiment
@@ -475,30 +295,17 @@ ML experiment
 → model registry
 → model promotion
 → model packaging
+→ artifact storage
 → model serving
 → containerization
 → image distribution
 → Kubernetes
 → CI/CD
 → GitOps
+→ rollback
 → observability
 → model/data lifecycle
-```
-
-The guiding engineering loop remains:
-
-```text
-Problem
-  ↓
-Failure / limitation
-  ↓
-Why it matters in production
-  ↓
-Smallest useful fix
-  ↓
-Hands-on validation
-  ↓
-Production equivalent
+→ LLMOps
 ```
 
 ## Session-start protocol
@@ -510,9 +317,10 @@ At the beginning of the next session:
 2. Read MLOPS_TEACHING_GUIDE.md.
 3. Inspect the current GitHub tree and latest commit.
 4. Check the latest CI result.
-5. Identify the first unfinished milestone.
-6. State the checkpoint briefly.
-7. Give only the commands needed for that checkpoint.
+5. Verify Hugging Face release state.
+6. Identify the first unfinished milestone.
+7. State the checkpoint briefly.
+8. Give only the commands needed for that checkpoint.
 ```
 
 If repository state contradicts an old chat message, trust the repository.
