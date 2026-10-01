@@ -10,6 +10,34 @@ from mlflow import MlflowClient
 MODEL_NAME = "customer-churn-model"
 MODEL_OUTPUT = "model.pkl"
 MODEL_METADATA_OUTPUT = "model_metadata.json"
+RELEASES_PREFIX = "releases"
+
+
+def get_next_release_version(hf_api, repo_id):
+    """Return the next persistent release number stored in Hugging Face."""
+    versions = []
+
+    try:
+        entries = hf_api.list_repo_tree(
+            repo_id=repo_id,
+            path=RELEASES_PREFIX,
+            recursive=False,
+            repo_type="model",
+        )
+
+        for entry in entries:
+            path = getattr(entry, "path", "")
+            if not path.startswith(f"{RELEASES_PREFIX}/"):
+                continue
+
+            name = path.rsplit("/", 1)[-1]
+            if name.isdigit():
+                versions.append(int(name))
+    except Exception as exc:
+        # A missing releases/ directory is expected for the first release.
+        print(f"No existing release directory found; starting at release 1 ({exc}).")
+
+    return max(versions, default=0) + 1
 
 
 def main():
@@ -24,21 +52,26 @@ def main():
         print(f"Unable to resolve production model: {exc}")
         sys.exit(1)
 
-    # MLflow's version is local to the CI run because the CI tracking store is
-    # ephemeral. Use the GitHub Actions run number as the persistent artifact
-    # version instead, so every successful CI run gets an immutable version.
     mlflow_model_version = str(production_version.version)
-    artifact_version = os.environ.get("MODEL_ARTIFACT_VERSION")
-    if not artifact_version:
-        print("MODEL_ARTIFACT_VERSION is required for persistent artifact versioning.")
-        sys.exit(1)
-
     run_id = production_version.run_id
     model_uri = f"models:/{MODEL_NAME}@production"
 
+    # The MLflow registry is intentionally CI-local/ephemeral. Persistent
+    # release numbering comes from the Hugging Face artifact repository and
+    # advances only when this packaging step is reached after promotion.
+    hf_repo_id = os.environ.get("HF_REPO_ID")
+    hf_token = os.environ.get("HF_TOKEN")
+
+    if not hf_repo_id or not hf_token:
+        print("HF_REPO_ID and HF_TOKEN are required to publish the model artifact.")
+        sys.exit(1)
+
+    hf_api = HfApi(token=hf_token)
+    release_version = get_next_release_version(hf_api, hf_repo_id)
+
     print("\nPackaging production model:")
     print(f"Model: {MODEL_NAME}")
-    print(f"Artifact version: {artifact_version}")
+    print(f"Model release version: {release_version}")
     print(f"MLflow version (CI-local): {mlflow_model_version}")
     print(f"Run ID: {run_id}")
     print(f"Model URI: {model_uri}")
@@ -47,12 +80,12 @@ def main():
     model = mlflow.sklearn.load_model(model_uri)
     joblib.dump(model, MODEL_OUTPUT)
 
-    # Keep both persistent artifact identity and CI-local MLflow lineage.
     run = client.get_run(run_id)
     dataset_version = run.data.tags.get("dataset_version")
     metadata = {
         "model_name": MODEL_NAME,
-        "model_version": artifact_version,
+        "model_version": str(release_version),
+        "model_release_version": str(release_version),
         "mlflow_model_version": mlflow_model_version,
         "run_id": run_id,
         "dataset_version": dataset_version,
@@ -65,29 +98,18 @@ def main():
     print(f"Packaged model written to: {MODEL_OUTPUT}")
     print(f"Model metadata written to: {MODEL_METADATA_OUTPUT}")
 
-    # Publish the immutable packaged artifact to Hugging Face.
-    # The API image still contains the model, so the artifact store is not a
-    # runtime dependency; it gives us a production-style artifact lifecycle.
-    hf_repo_id = os.environ.get("HF_REPO_ID")
-    hf_token = os.environ.get("HF_TOKEN")
+    artifact_prefix = f"{RELEASES_PREFIX}/{release_version}"
 
-    if not hf_repo_id or not hf_token:
-        print("HF_REPO_ID and HF_TOKEN are required to publish the model artifact.")
-        sys.exit(1)
-
-    hf_api = HfApi(token=hf_token)
-    artifact_prefix = f"versions/{artifact_version}"
-
-    print("\nPublishing model artifact to Hugging Face:")
+    print("\nPublishing promoted model artifact to Hugging Face:")
     print(f"Repository: {hf_repo_id}")
-    print(f"Path: {artifact_prefix}/")
+    print(f"Release path: {artifact_prefix}/")
 
     hf_api.upload_file(
         path_or_fileobj=MODEL_OUTPUT,
         path_in_repo=f"{artifact_prefix}/{MODEL_OUTPUT}",
         repo_id=hf_repo_id,
         repo_type="model",
-        commit_message=f"Publish customer churn model v{artifact_version}",
+        commit_message=f"Publish customer churn release v{release_version}",
     )
 
     hf_api.upload_file(
@@ -95,10 +117,10 @@ def main():
         path_in_repo=f"{artifact_prefix}/{MODEL_METADATA_OUTPUT}",
         repo_id=hf_repo_id,
         repo_type="model",
-        commit_message=f"Publish metadata for customer churn model v{artifact_version}",
+        commit_message=f"Publish metadata for customer churn release v{release_version}",
     )
 
-    print("Model artifact successfully published to Hugging Face.")
+    print("Model release successfully published to Hugging Face.")
 
 
 if __name__ == "__main__":
