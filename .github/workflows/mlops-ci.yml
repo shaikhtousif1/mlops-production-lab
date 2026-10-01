@@ -73,7 +73,6 @@ jobs:
           MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO_ID: ${{ vars.HF_REPO_ID }}
-          MODEL_ARTIFACT_VERSION: ${{ github.run_number }}
         run: |
           python src/package_model.py
 
@@ -84,7 +83,7 @@ jobs:
       - name: Prepare Kubernetes manifest
         if: github.event_name == 'push'
         run: |
-          MODEL_VERSION=$(python -c "import json; print(json.load(open('model_metadata.json'))['model_version'])")
+          MODEL_VERSION=$(python -c "import json; print(json.load(open('model_metadata.json'))['model_release_version'])")
           MODEL_RUN_ID=$(python -c "import json; print(json.load(open('model_metadata.json'))['run_id'])")
           DATASET_VERSION=$(python -c "import json; print(json.load(open('model_metadata.json'))['dataset_version'])")
 
