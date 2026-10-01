@@ -1,6 +1,47 @@
 # MLOps Production Lab
 
-A production-style MLOps learning lab covering model training, MLflow tracking and registry, model quality gates, containerization, GitHub Actions CI, GHCR, Kubernetes, and Flux GitOps.
+A production-style MLOps learning lab covering reproducible model training, MLflow tracking and registry, model quality gates, model promotion, artifact packaging, GitHub Actions CI, Hugging Face model artifacts, GHCR, Kubernetes, and Flux GitOps.
+
+## Current architecture
+
+```text
+Dataset
+  ↓
+Training + CV
+  ↓
+MLflow tracking
+  ↓
+Quality gate / model selection
+  ↓
+MLflow Model Registry
+  ↓
+production alias
+  ↓
+Package EXACT promoted model
+  ↓
+Hugging Face release artifact
+  ↓
+Docker image
+  ↓
+GHCR
+  ↓
+GitOps manifest
+  ↓
+Flux
+  ↓
+Kubernetes
+```
+
+The project intentionally separates these concerns:
+
+```text
+MLflow       = model tracking / registry / promotion
+HF           = learning-lab model artifact storage
+Docker/GHCR  = application runtime artifact
+Git          = Kubernetes desired state
+Flux         = GitOps reconciliation
+Kubernetes   = model-serving runtime
+```
 
 ## Killercoda: Recreate the Kubernetes + Flux Environment
 
@@ -41,15 +82,13 @@ git log -1 --oneline
 
 ### 2. Run the Killercoda bootstrap
 
-Run the repository bootstrap script:
+Run:
 
 ```bash
 bash scripts/bootstrap-killercoda.sh
 ```
 
 The script recreates the Kubernetes/Flux lab, configures Flux to pull this private repository, and reconciles the application deployment.
-
-If the script asks for the GitHub PAT, provide the same PAT used for the repository clone.
 
 ### 3. Verify Flux
 
@@ -78,55 +117,59 @@ kubectl get deployment customer-churn-api -n mlops \
 
 ### 5. Expose the API locally in Killercoda
 
-The Kubernetes Service is a `ClusterIP`, so `curl http://localhost:8000` will not work until we create a local port-forward.
-
-Run the port-forward in the background:
+The Kubernetes Service is a `ClusterIP`, so `curl http://localhost:8000` will not work until a local port-forward is running.
 
 ```bash
 kubectl -n mlops port-forward svc/customer-churn-api 8000:8000 >/tmp/customer-churn-api-port-forward.log 2>&1 &
 ```
 
-Verify the port-forward is active:
+Verify it:
 
 ```bash
 curl http://localhost:8000/
 ```
 
-If needed, inspect the port-forward log:
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+If it fails:
 
 ```bash
 cat /tmp/customer-churn-api-port-forward.log
+kubectl get pods -n mlops
+kubectl describe pod -n mlops -l app=customer-churn-api
 ```
 
-### 6. Test the API
+### 6. Test the API and model lineage
 
-Health/root endpoint:
+Health:
 
 ```bash
-curl "http://localhost:8000/"
+curl http://localhost:8000/
 ```
 
-Prediction test:
+Model lineage:
+
+```bash
+curl http://localhost:8000/model-info
+```
+
+Prediction:
 
 ```bash
 curl -X POST "http://localhost:8000/predict?age=45&tenure_months=24&monthly_charges=80&support_tickets=2&usage_hours=150"
 ```
 
-Expected response format:
-
-```json
-{"prediction":1}
-```
-
-To stop the port-forward later:
+To stop the port-forward:
 
 ```bash
 pkill -f 'kubectl.*port-forward.*customer-churn-api'
 ```
 
-### GitOps model
-
-The intended deployment flow is:
+## GitOps model
 
 ```text
 GitHub
@@ -147,67 +190,195 @@ customer-churn-api Pod
 
 The Kubernetes manifests in Git are the desired state. Do not manually edit the live Deployment as the normal deployment mechanism; changes should flow through Git and Flux.
 
-### Important: GitHub clone authentication vs Flux authentication
+### GitHub clone authentication vs Flux authentication
 
 There are two separate authentication steps:
 
-1. **Git clone authentication** - used by you to clone the private repository into the Killercoda VM.
-2. **Flux Git authentication** - stored as a Kubernetes Secret so Flux can continuously reconcile the private repository after the bootstrap finishes.
+1. **Git clone authentication** — used to clone the private repository into Killercoda.
+2. **Flux Git authentication** — stored as a Kubernetes Secret so Flux can continuously reconcile the private repository.
 
-The PAT is therefore used during setup, but it should never be committed to Git.
+The PAT is used during setup but must never be committed to Git.
 
 ## Local development
 
-The project also supports the VS Code Dev Container. The development container is configured to reach the local MLflow service when the Docker Compose network is available.
+The project supports the VS Code Dev Container and local Docker Compose MLflow service.
 
 Typical local workflow:
 
 ```bash
-python -c "import pandas, mlflow, sklearn; print('Dependencies OK')"
 python src/train.py --c 0.1
 python src/select_model.py
 python src/register_model.py
 python src/promote_model.py
 ```
 
-MLflow tracking is provided by the local Docker Compose environment.
+For experimentation, `C` is configurable. The current CI candidate is intentionally configured separately in the GitHub Actions workflow.
+
+## Model lifecycle
+
+The model pipeline currently demonstrates:
+
+```text
+Train candidate
+    ↓
+Evaluate
+    ↓
+Quality gate
+    ↓
+Register
+    ↓
+Promote production alias
+    ↓
+Package exact promoted model
+    ↓
+Publish immutable learning-lab release to Hugging Face
+```
+
+The Hugging Face repository uses:
+
+```text
+releases/1/
+  model.pkl
+  model_metadata.json
+
+releases/2/
+  model.pkl
+  model_metadata.json
+```
+
+`model_metadata.json` records both the persistent release version and the CI-local MLflow model version. The CI MLflow database is intentionally ephemeral, so MLflow model version numbers restart across fresh CI jobs; the Hugging Face release number is the persistent artifact version.
+
+### Important artifact-version distinction
+
+```text
+MLflow version
+    = registry version inside the MLflow environment
+
+Model release version
+    = persistent artifact release stored in Hugging Face
+
+Docker image tag
+    = immutable Git SHA identifying the application build
+```
+
+These numbers do **not** have to be the same.
 
 ## CI/CD flow
 
-GitHub Actions currently performs the core validation and build flow:
+The current learning pipeline is still a single end-to-end GitHub Actions workflow:
 
 ```text
 Push to main
-   |
-   v
-Python validation
-   |
-   v
-pytest
-   |
-   v
-Training-data validation
-   |
-   v
-Training
-   |
-   v
+   ↓
+Validate Python
+   ↓
+Validate dataset
+   ↓
+Train candidate
+   ↓
 Model quality gate
-   |
-   v
-Model registration
-   |
-   v
+   ↓
+Register
+   ↓
+Promote production alias
+   ↓
+Package promoted model
+   ↓
+Publish model release to Hugging Face
+   ↓
+pytest
+   ↓
 Build API image
-   |
-   v
+   ↓
 Push image to GHCR
-   |
-   v
+   ↓
 Update Kubernetes desired state
-   |
-   v
+   ↓
 Flux reconciles Kubernetes
 ```
 
-The model registry and Kubernetes deployment are intentionally separate concerns: MLflow tracks/registers/promotes the model, while the API container packages the model/runtime used by Kubernetes.
+The current CI training candidate uses `C=0.5` to demonstrate a new model candidate. This is a teaching mechanism, not the intended production approach. The eventual design should make hyperparameter search/configuration explicit rather than requiring source-code edits for every experiment.
+
+## Production-equivalent architecture we will learn next
+
+A production platform would normally separate the model lifecycle from application deployment:
+
+```text
+Model CI/CD
+
+Data
+ ↓
+Training / hyperparameter search
+ ↓
+Evaluation
+ ↓
+Quality gate
+ ↓
+Model registry
+ ↓
+Promotion
+ ↓
+Artifact storage
+```
+
+and:
+
+```text
+Application CI/CD
+
+Application code
+ ↓
+Tests
+ ↓
+Docker build
+ ↓
+GHCR/ECR/etc.
+ ↓
+GitOps manifest
+ ↓
+Flux
+ ↓
+Kubernetes
+```
+
+For the lab, Hugging Face is used instead of S3 to avoid unnecessary cloud cost. In a production AWS design, the artifact layer could use S3 with IAM, encryption, lifecycle policies, and durable versioned objects.
+
+## Rollback learning plan
+
+The next hands-on milestone is rollback. We will deliberately create multiple model/application releases and practice both:
+
+### Model rollback
+
+```text
+production → model v3
+             ↓
+          rollback
+             ↓
+production → model v2
+```
+
+No retraining is required if v2 remains available as an immutable artifact.
+
+### Application/GitOps rollback
+
+```text
+Git commit A → model v2 + image A
+Git commit B → model v3 + image B
+                    ↓
+                 rollback
+                    ↓
+Git commit A → Flux → Kubernetes
+```
+
+This will teach the distinction between **model rollback** and **application rollback**.
+
+## Next learning milestones
+
+1. Verify persistent Hugging Face `releases/2/` after the corrected release-discovery code.
+2. Validate model lineage from CI → HF → Docker → Git → Flux → Kubernetes.
+3. Split model CI/CD and application CI/CD conceptually and then implement the separation.
+4. Perform a model rollback.
+5. Perform a GitOps/application rollback.
+6. Add observability and model/data drift.
+7. Introduce a production-style durable artifact store concept using S3/Azure Blob/GCS without unnecessary cloud spend.
+8. Extend the platform toward LLMOps: prompt/version management, evaluation, RAG, vector storage, LLM observability, cost tracking, and guardrails.
