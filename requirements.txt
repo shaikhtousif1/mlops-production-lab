@@ -6,3 +6,4 @@ uvicorn
 joblib
 httpx
 pytest
+huggingface_hub
