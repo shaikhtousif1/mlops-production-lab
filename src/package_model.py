@@ -20,21 +20,20 @@ def get_next_release_version(hf_api, repo_id):
     try:
         entries = hf_api.list_repo_tree(
             repo_id=repo_id,
-            path=RELEASES_PREFIX,
+            path_in_repo=RELEASES_PREFIX,
             recursive=False,
             repo_type="model",
         )
 
         for entry in entries:
             path = getattr(entry, "path", "")
-            if not path.startswith(f"{RELEASES_PREFIX}/"):
-                continue
-
             name = path.rsplit("/", 1)[-1]
             if name.isdigit():
                 versions.append(int(name))
+
     except Exception as exc:
-        print(f"No existing release directory found; starting at release 1 ({exc}).")
+        print(f"Unable to inspect Hugging Face releases: {exc}")
+        sys.exit(1)
 
     return max(versions, default=0) + 1
 
