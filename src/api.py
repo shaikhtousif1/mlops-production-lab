@@ -16,7 +16,8 @@ except FileNotFoundError:
     # CI packaging step has generated deployment metadata.
     model_metadata = {
         "model_name": "customer-churn-model",
-        "model_version": "unknown",
+        "model_release_version": "unknown",
+        "mlflow_model_version": "unknown",
         "run_id": "unknown",
         "dataset_version": "unknown",
     }
