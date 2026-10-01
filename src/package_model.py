@@ -34,7 +34,6 @@ def get_next_release_version(hf_api, repo_id):
             if name.isdigit():
                 versions.append(int(name))
     except Exception as exc:
-        # A missing releases/ directory is expected for the first release.
         print(f"No existing release directory found; starting at release 1 ({exc}).")
 
     return max(versions, default=0) + 1
@@ -56,9 +55,6 @@ def main():
     run_id = production_version.run_id
     model_uri = f"models:/{MODEL_NAME}@production"
 
-    # The MLflow registry is intentionally CI-local/ephemeral. Persistent
-    # release numbering comes from the Hugging Face artifact repository and
-    # advances only when this packaging step is reached after promotion.
     hf_repo_id = os.environ.get("HF_REPO_ID")
     hf_token = os.environ.get("HF_TOKEN")
 
@@ -76,7 +72,6 @@ def main():
     print(f"Run ID: {run_id}")
     print(f"Model URI: {model_uri}")
 
-    # Load the exact model currently pointed to by the MLflow production alias.
     model = mlflow.sklearn.load_model(model_uri)
     joblib.dump(model, MODEL_OUTPUT)
 
@@ -84,7 +79,6 @@ def main():
     dataset_version = run.data.tags.get("dataset_version")
     metadata = {
         "model_name": MODEL_NAME,
-        "model_version": str(release_version),
         "model_release_version": str(release_version),
         "mlflow_model_version": mlflow_model_version,
         "run_id": run_id,
