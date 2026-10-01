@@ -73,6 +73,7 @@ jobs:
           MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO_ID: ${{ vars.HF_REPO_ID }}
+          MODEL_ARTIFACT_VERSION: ${{ github.run_number }}
         run: |
           python src/package_model.py
 
