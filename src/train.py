@@ -18,7 +18,7 @@ from sklearn.metrics import (
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--c", type=float, default=1.0)
+    parser.add_argument("--c", type=float, default=0.5)
 
     args = parser.parse_args()
 
@@ -47,7 +47,6 @@ def main():
     print(f"Testing samples: {len(X_test)}")
 
     # 4. Create the model
-    # C = 1.0
     model = LogisticRegression(C=C, max_iter=1000)
     cv_scores = cross_val_score(
         model,
@@ -60,12 +59,12 @@ def main():
     std_accuracy = cv_scores.std()
 
     cv_f1_scores = cross_val_score(
-    model,
-    X,
-    y,
-    cv=5,
-    scoring="f1",
-)
+        model,
+        X,
+        y,
+        cv=5,
+        scoring="f1",
+    )
 
     mean_f1 = cv_f1_scores.mean()
     std_f1 = cv_f1_scores.std()
@@ -87,10 +86,9 @@ def main():
         mlflow.log_metric("mean_accuracy", mean_accuracy)
         mlflow.log_metric("std_accuracy", std_accuracy)
 
-        # adding data set version for new data set
+        # Dataset version for lineage
         mlflow.set_tag("dataset_version", "v2")
 
-        # add comment
         mlflow.log_metric("mean_f1", mean_f1)
         mlflow.log_metric("std_f1", std_f1)
 
@@ -98,7 +96,6 @@ def main():
         model.fit(X_train, y_train)
         joblib.dump(model, "model.pkl")
         print("y_test shape:", y_test.shape)
-        
 
         # 7. Make predictions
         predictions = model.predict(X_test)
@@ -110,8 +107,8 @@ def main():
         precision = precision_score(y_test, predictions)
         recall = recall_score(y_test, predictions)
         f1 = f1_score(y_test, predictions)
-        cm = confusion_matrix(y_test,predictions)
-        roc_auc = roc_auc_score(y_test,probabilities)
+        cm = confusion_matrix(y_test, predictions)
+        roc_auc = roc_auc_score(y_test, probabilities)
 
         print(f"\nprecision: {precision:.2f}")
         print(f"\nrecall: {recall:.2f}")
@@ -119,13 +116,12 @@ def main():
         print(f"\ncm: {cm}")
         print(f"\nroc_auc: {roc_auc:.2f}")
 
-
         # 8. Evaluate the model
         accuracy = accuracy_score(y_test, predictions)
 
         print(f"\nModel accuracy: {accuracy:.2f}")
 
-        # Record metric
+        # Record metrics
         mlflow.log_metric("accuracy", accuracy)
         mlflow.log_metric("precision", precision)
         mlflow.log_metric("recall", recall)
