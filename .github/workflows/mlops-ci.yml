@@ -68,9 +68,11 @@ jobs:
         run: |
           python src/promote_model.py
 
-      - name: Package promoted model
+      - name: Package and publish promoted model
         env:
           MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO_ID: ${{ vars.HF_REPO_ID }}
         run: |
           python src/package_model.py
 
