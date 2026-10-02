@@ -22,7 +22,7 @@ def main() -> None:
     bucket = required("SUPABASE_STORAGE_BUCKET")
     endpoint = required("MLFLOW_S3_ENDPOINT_URL")
     region = required("AWS_DEFAULT_REGION")
-    artifact_location = f"s3://{bucket}/mlflow-artifacts"
+    artifact_location = f"s3://{bucket}"
 
     mlflow.set_tracking_uri(tracking_uri)
 
