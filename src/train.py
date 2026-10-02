@@ -1,4 +1,5 @@
 import argparse
+import os
 import pandas as pd
 import mlflow
 import joblib
@@ -23,6 +24,10 @@ def main():
     args = parser.parse_args()
 
     C = args.c
+
+    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "customer-churn-ci")
+    mlflow.set_experiment(experiment_name)
+    print(f"MLflow experiment: {experiment_name}")
 
     # 1. Load the dataset
     df = pd.read_csv("data/customers.csv")
@@ -133,6 +138,7 @@ def main():
             model,
             name="model"
         )
+
 
 if __name__ == "__main__":
     main()
