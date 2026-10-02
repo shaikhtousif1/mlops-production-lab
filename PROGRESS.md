@@ -1,83 +1,99 @@
 # MLOps Production Lab — Progress
 
-## Checkpoint — 2026-10-02
+## Checkpoint — 2026-10-02 — End of Day
 
-Today's session moved the lab to a persistent MLflow backend and artifact architecture while keeping the learning environment low-cost and cloud-provider-neutral.
+Today the lab completed the persistent MLflow migration and the separation of CI and CD. Both workflows were successfully triggered and completed after the final CD fix.
 
-### Current end-to-end concept
+### Current end-to-end architecture
 
 ```text
-Dataset
-  ↓
+Dataset v2
+   ↓
 Training + cross-validation
-  ↓
+   ↓
 MLflow tracking
-  ├── Supabase PostgreSQL (persistent metadata)
-  └── Supabase Storage via S3 API (MLflow artifacts)
-  ↓
-Deterministic quality gate / selection
-  ↓
+   ├── Supabase PostgreSQL (persistent metadata / registry)
+   └── Supabase Storage via S3-compatible API (MLflow artifacts)
+   ↓
+Quality gate / deterministic selection
+   ↓
 MLflow Model Registry
-  ↓
-Production alias
-  ↓
+   ↓
+production alias
+   ↓
 Package EXACT promoted model
-  ↓
-Persistent Hugging Face release artifact
-  ↓
-Docker image
-  ↓
+   ↓
+Hugging Face persistent release artifact
+   ↓
+Application image
+   ↓
 GHCR
-  ↓
-GitOps desired state
-  ↓
+   ↓
+MLOps CD
+   ↓
+GitOps manifest
+   ↓
 Flux
-  ↓
+   ↓
 Kubernetes
 ```
 
 ## Completed / validated
 
 - [x] VS Code Dev Container / Python 3.11
-- [x] Local Docker Compose MLflow environment
-- [x] Reproducible customer-churn dataset v2
+- [x] Reproducible customer-churn Dataset v2
 - [x] Logistic Regression with configurable `C`
 - [x] 5-fold cross-validation
 - [x] Accuracy / Precision / Recall / F1 / ROC-AUC
 - [x] MLflow experiment tracking
 - [x] Dataset lineage using `dataset_version=v2`
-- [x] Deterministic model selection
+- [x] Deterministic model selection / quality gate
 - [x] MLflow Model Registry
 - [x] `customer-churn-model` registration
+- [x] Production model alias / promotion
 - [x] FastAPI `/`, `/predict`, and `/model-info`
 - [x] Dockerized API
-- [x] API tests and model tests
-- [x] Training-data validation and negative tests
-- [x] GitHub Actions CI
-- [x] CI model registration and promotion workflow
-- [x] CI packaging of the promoted model
-- [x] Hugging Face model repository configured as the learning-lab release artifact store
-- [x] GHCR image build/push
+- [x] API/model/data validation tests
+- [x] GHCR image build and push
 - [x] Git-SHA image tags
 - [x] Kubernetes Deployment + Service
-- [x] Kubernetes readiness/liveness probes
+- [x] Readiness/liveness probes
 - [x] Flux GitRepository + Kustomization
 - [x] Private GitHub authentication for Flux
-- [x] One-shot/idempotent Killercoda bootstrap
+- [x] Killercoda bootstrap
 - [x] Kubernetes prediction smoke test
-- [x] GitOps manifest updates marked `[skip ci]`
-- [x] Supabase PostgreSQL configured as persistent MLflow tracking/registry backend
-- [x] Supabase Storage S3-compatible endpoint configured for MLflow artifacts
-- [x] `psycopg[binary]` added to dependencies for PostgreSQL connectivity
-- [x] `boto3` added to dependencies for S3-compatible MLflow artifact storage
-- [x] GitHub Actions updated to use `MLFLOW_DATABASE_URI` and Supabase S3 credentials
-- [x] CI workflow updated with a dedicated MLflow experiment setup step
+- [x] Supabase PostgreSQL as persistent MLflow tracking/registry backend
+- [x] Supabase Storage S3-compatible endpoint as MLflow artifact store
+- [x] `psycopg[binary]` dependency for PostgreSQL
+- [x] `boto3` dependency for S3-compatible artifact access
+- [x] GitHub Secrets/Variables configured for MLflow and Supabase Storage
+- [x] Dedicated MLflow experiment setup step
+- [x] Persistent MLflow experiment verified with artifact location `s3://mlflow-artifacts`
+- [x] MLflow `customer-churn-model` and model version persisted in Supabase PostgreSQL
+- [x] Hugging Face used as separate packaged model release storage
+- [x] MLOps CI workflow separated from MLOps CD
+- [x] Successful CI → CD `workflow_run` trigger
+- [x] CD successfully updates `k8s/deployment.yaml` and pushes to `main`
+- [x] Fixed CD detached-HEAD failure by checking out `main` before committing/pushing
+- [x] `[skip ci]` retained on deployment-state commits to avoid CI/CD loops
 
-## Persistent MLflow architecture
+## Persistent MLflow design decision
 
-The previous CI design used an ephemeral SQLite database. This caused every fresh GitHub Actions job to start with a new MLflow registry and could not provide durable model metadata.
+### Why we changed from SQLite
 
-The lab now uses:
+The original CI design used an ephemeral SQLite database:
+
+```text
+sqlite:///mlflow-ci.db
+```
+
+That meant every GitHub Actions runner started with a fresh MLflow database. Runs, registered models, and model versions could not be treated as durable shared state across independent jobs/runs.
+
+We therefore selected Supabase PostgreSQL for the learning lab.
+
+### Why Supabase
+
+The goal was persistent state without introducing an AWS account and S3 setup solely for this lab.
 
 ```text
 Supabase PostgreSQL
@@ -88,27 +104,58 @@ Supabase Storage
     ↓
 S3-compatible API
     ↓
-MLflow model artifacts
+MLflow artifacts
 ```
 
-The GitHub Actions workflow receives these through GitHub Secrets/Variables:
+This is a learning-lab design choice. Production AWS could use RDS/PostgreSQL plus S3 with IAM, encryption, lifecycle policies, and stronger network controls.
+
+## Supabase configuration model
+
+The repository never stores Supabase passwords or Storage secret keys.
+
+GitHub **Secrets**:
 
 ```text
 MLFLOW_DATABASE_URI
-MLFLOW_S3_ENDPOINT_URL
-MLFLOW_S3_REGION
-SUPABASE_S3_ACCESS_KEY_ID
-SUPABASE_S3_SECRET_ACCESS_KEY
-SUPABASE_STORAGE_BUCKET
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+HF_TOKEN
 ```
 
-No database password or storage credentials are stored in the repository.
+GitHub **Variables** / non-sensitive configuration:
 
-The connection to Supabase PostgreSQL was successfully tested from the Dev Container, and the MLflow schema/tables were created successfully. The `customer-churn-model` registered model and model version 1 were also verified in the persistent database during the migration work.
+```text
+MLFLOW_S3_ENDPOINT_URL
+AWS_DEFAULT_REGION
+SUPABASE_STORAGE_BUCKET
+HF_REPO_ID
+```
 
-## Artifact architecture clarification
+The Storage bucket is:
 
-We explicitly separated two artifact concepts:
+```text
+mlflow-artifacts
+```
+
+The S3-compatible endpoint is supplied through `MLFLOW_S3_ENDPOINT_URL`.
+
+### Supabase shutdown procedure
+
+When finished for the day, do not delete the Supabase project. For a Free Plan project, pause it from the Supabase dashboard:
+
+```text
+Project
+  → Settings
+  → General
+  → Project availability
+  → Pause Project
+```
+
+Resume it before running MLflow/CI again. While paused, the MLflow database and Storage API are unavailable, so CI cannot connect until the project is resumed.
+
+## MLflow vs Hugging Face artifact decision
+
+We explicitly separated two concepts:
 
 ```text
 MLflow artifact store
@@ -118,49 +165,84 @@ Hugging Face release
     = immutable packaged model release used by this learning lab
 ```
 
-They are complementary, not duplicates serving exactly the same purpose.
+They are complementary rather than interchangeable.
 
-For this lab:
+The learning lab therefore keeps:
 
 ```text
-Supabase S3
-    → MLflow's artifact storage
-
-Hugging Face
-    → persistent packaged release consumed by the release workflow
+Supabase S3 → MLflow artifacts
+Hugging Face → packaged release artifact
 ```
 
-In a production AWS environment, S3 could provide the durable MLflow artifact layer without needing Hugging Face for that purpose.
+## CI/CD separation decision
 
-## CI changes completed
+We deliberately separated training/model lifecycle from deployment-state management.
 
-The CI workflow now configures the persistent MLflow environment before training:
+### MLOps CI
 
 ```text
-Configure MLflow experiment + artifact store
-        ↓
-Run training
-        ↓
+Validate
+  ↓
+Train
+  ↓
 Quality gate
-        ↓
-Register model
-        ↓
-Promote model
-        ↓
-Package/publish release
-        ↓
-Tests
-        ↓
-Build GHCR image
-        ↓
-Update GitOps manifest
+  ↓
+Register
+  ↓
+Promote
+  ↓
+Package
+  ↓
+Publish HF release
+  ↓
+Test
+  ↓
+Build/push GHCR image
 ```
 
-All MLflow-related steps use the persistent `MLFLOW_DATABASE_URI`. Training, quality selection, registration, and packaging also receive the S3-compatible artifact-store configuration.
+### MLOps CD
 
-## Current training state
+```text
+Successful MLOps CI
+  ↓
+workflow_run trigger
+  ↓
+Download release metadata
+  ↓
+Checkout main
+  ↓
+Update k8s/deployment.yaml
+  ↓
+Validate
+  ↓
+Commit [skip ci]
+  ↓
+Push main
+  ↓
+Flux reconciliation
+  ↓
+Kubernetes
+```
 
-The latest local training run with `C=0.5` produced:
+### CD detached-HEAD issue and resolution
+
+The first CD implementation checked out the CI SHA directly. GitHub Actions therefore placed the runner in detached HEAD state. The deployment manifest commit succeeded, but:
+
+```text
+fatal: You are not currently on a branch.
+```
+
+The workflow was corrected to check out `main` and explicitly push:
+
+```bash
+git push origin main
+```
+
+After this fix, both MLOps CI and MLOps CD completed successfully.
+
+## Current training checkpoint
+
+The latest local `C=0.5` training run produced:
 
 ```text
 Cross-validation accuracy: 0.65
@@ -174,147 +256,73 @@ ROC-AUC:                   0.71
 Test accuracy:             0.65
 ```
 
-The run was successfully written to the persistent MLflow database after the PostgreSQL migration. Model registration was also successfully tested locally:
-
-```text
-customer-churn-model
-version 1
-```
-
-## Important CI issue found during migration
-
-The first CI attempt against Supabase failed because the GitHub runner did not have the PostgreSQL Python driver:
-
-```text
-ModuleNotFoundError: No module named 'psycopg'
-```
-
-This was fixed by adding:
-
-```text
-psycopg[binary]
-```
-
-to `requirements.txt`.
-
-The next CI attempt then reached MLflow artifact logging but failed because the MLflow experiment still had a local artifact location:
-
-```text
-/workspace/mlruns/0
-```
-
-The workflow has now been updated to configure the persistent S3-compatible artifact store before training. The next CI run is the validation checkpoint for that migration.
+The persistent MLflow database was successfully connected from the Dev Container and MLflow schema tables were created. The `customer-churn-model` registration and model version 1 were verified during the migration work.
 
 ## Versioning mental model
 
-These identifiers remain intentionally separate:
+Keep these identities separate:
 
 ```text
 MLflow model version
     = persistent registry version in Supabase PostgreSQL
 
 Model release version
-    = persistent packaged release number in Hugging Face
+    = persistent packaged release in Hugging Face
 
 Docker image tag
     = immutable Git SHA for the application build
 ```
 
-They do **not** have to be the same.
+They do not have to match.
 
-## Production architecture discussion
+## Known migration lessons
 
-A production environment would normally use durable object storage such as S3, Azure Blob, or GCS for MLflow artifacts, with IAM/service identities, encryption, lifecycle management, and appropriate network controls.
+### PostgreSQL driver
 
-For this lab, Supabase provides a low-cost PostgreSQL backend and S3-compatible object storage without requiring a separate AWS account.
-
-## Rollback learning plan
-
-The next hands-on milestone after validating persistent artifacts is rollback.
-
-### Model rollback
+The first CI run against Supabase failed with:
 
 ```text
-production → model v3
-             ↓
-          rollback
-             ↓
-production → model v2
+ModuleNotFoundError: No module named 'psycopg'
 ```
 
-No retraining is required if v2 remains available as an immutable artifact.
+Adding `psycopg[binary]` to `requirements.txt` resolved the database-driver issue.
 
-### Application/GitOps rollback
+### Local artifact location
+
+The next migration issue was an existing MLflow experiment pointing at a local path such as:
 
 ```text
-Git commit A → model v2 + image A
-Git commit B → model v3 + image B
-                    ↓
-                 rollback
-                    ↓
-Git commit A → Flux → Kubernetes
+/workspace/mlruns/0
 ```
 
-This will teach the distinction between **model rollback** and **application rollback**.
+The experiment setup was corrected so the persistent experiment uses the Supabase S3-compatible artifact layer.
 
-## Pipeline architecture discussion
+### Artifact store and registry are different
 
-The current CI is intentionally a single end-to-end workflow. The production-oriented target is to separate:
+A registered model record in PostgreSQL does not itself contain the model file. MLflow needs both persistent metadata and durable artifact storage.
 
-### Model CI/CD
+### Secrets are configuration, not code
 
-```text
-Data
- ↓
-Training / hyperparameter search
- ↓
-Evaluation
- ↓
-Quality gate
- ↓
-Model registry
- ↓
-Promotion
- ↓
-Artifact storage
-```
-
-### Application CI/CD
-
-```text
-Application code
- ↓
-Tests
- ↓
-Docker build
- ↓
-GHCR/ECR/etc.
- ↓
-GitOps manifest
- ↓
-Flux
- ↓
-Kubernetes
-```
-
-We will implement this separation after validating the persistent MLflow artifact flow.
+Database passwords and Storage secret keys belong in GitHub Secrets, never in `train.py`, YAML committed to the repository, or documentation.
 
 ## Next session — exact order
 
-1. Run the updated GitHub Actions pipeline and verify MLflow artifacts are written to Supabase Storage.
-2. Confirm the MLflow experiment no longer uses `/workspace/mlruns/0` as its artifact location.
-3. Verify a CI run and registered model version persist across a separate CI run.
-4. Verify the Hugging Face release remains a separate immutable packaged artifact.
-5. Validate lineage from CI → MLflow → HF → Docker → Git → Flux → Kubernetes.
-6. Split Model CI/CD from Application CI/CD.
-7. Perform a deliberate model rollback.
-8. Perform a deliberate GitOps/application rollback.
+1. Read `PROGRESS.md` and `MLOPS_TEACHING_GUIDE.md`.
+2. Check the latest repository commit and CI/CD status.
+3. Resume Supabase if it was paused.
+4. Verify the MLflow experiment and artifact location.
+5. Verify the latest Hugging Face release.
+6. Verify the latest GitOps deployment and `/model-info` lineage in Kubernetes.
+7. Perform a deliberate **model rollback**.
+8. Perform a deliberate **GitOps/application rollback**.
 9. Add observability and model/data drift.
-10. Extend the platform toward LLMOps/FDE workflows.
+10. Begin the LLMOps/FDE extension.
+
+Do not spend the next session reworking the CI/CD plumbing unless a new failure requires it. The current CI → CD path has been successfully validated.
 
 ## Project objective
 
-The lab is teaching the production MLOps mental model around the learner's existing DevOps/cloud skills:
+The lab is teaching the production MLOps mental model using the learner's existing DevOps/cloud background:
 
 ```text
 ML experiment
@@ -346,11 +354,12 @@ At the beginning of the next session:
 2. Read MLOPS_TEACHING_GUIDE.md.
 3. Inspect the current GitHub tree and latest commit.
 4. Check the latest CI result.
-5. Verify Supabase MLflow artifact state.
-6. Verify Hugging Face release state.
-7. Identify the first unfinished milestone.
-8. State the checkpoint briefly.
-9. Give only the commands needed for that checkpoint.
+5. Check the latest CD result.
+6. Verify Supabase MLflow artifact state.
+7. Verify Hugging Face release state.
+8. Identify the first unfinished milestone.
+9. State the checkpoint briefly.
+10. Give only the commands needed for that checkpoint.
 ```
 
 If repository state contradicts an old chat message, trust the repository.
