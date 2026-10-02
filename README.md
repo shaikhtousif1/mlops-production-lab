@@ -382,3 +382,4 @@ This will teach the distinction between **model rollback** and **application rol
 6. Add observability and model/data drift.
 7. Introduce a production-style durable artifact store concept using S3/Azure Blob/GCS without unnecessary cloud spend.
 8. Extend the platform toward LLMOps: prompt/version management, evaluation, RAG, vector storage, LLM observability, cost tracking, and guardrails.
+
