@@ -1,3 +1,4 @@
+import os
 import sys
 import mlflow
 
@@ -8,7 +9,14 @@ OUTPUT_FILE = "/tmp/selected_run_id"
 
 
 def main():
-    runs = mlflow.search_runs()
+    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "customer-churn-ci")
+    experiment = mlflow.get_experiment_by_name(experiment_name)
+
+    if experiment is None:
+        print(f"MLflow experiment not found: {experiment_name}")
+        sys.exit(1)
+
+    runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id])
 
     # Only consider the current dataset version
     runs = runs[runs["tags.dataset_version"] == "v2"]
@@ -42,6 +50,7 @@ def main():
     recall = selected["metrics.recall"]
     precision = selected["metrics.precision"]
 
+    print(f"\nMLflow experiment: {experiment_name}")
     print("\nSelected model candidate:")
     print(f"Run ID: {run_id}")
     print(f"C: {selected['params.C']}")
