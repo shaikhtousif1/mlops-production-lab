@@ -129,8 +129,10 @@ def main():
         mlflow.log_metric("roc_auc", roc_auc)
 
         # Store the trained model
-        mlflow.sklearn.log_model(model, "model")
-
+        mlflow.sklearn.log_model(
+            model,
+            name="model"
+        )
 
 if __name__ == "__main__":
     main()

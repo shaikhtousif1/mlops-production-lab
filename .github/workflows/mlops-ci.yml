@@ -46,31 +46,31 @@ jobs:
 
       - name: Run training
         env:
-          MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_DATABASE_URI }}
         run: |
           python src/train.py --c 0.5
 
       - name: Run model quality gate
         env:
-          MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_DATABASE_URI }}
         run: |
           python src/select_model.py
 
       - name: Register model
         env:
-          MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_DATABASE_URI }}
         run: |
           python src/register_model.py
 
       - name: Promote model to production
         env:
-          MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_DATABASE_URI }}
         run: |
           python src/promote_model.py
 
       - name: Package and publish promoted model
         env:
-          MLFLOW_TRACKING_URI: sqlite:///mlflow-ci.db
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_DATABASE_URI }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO_ID: ${{ vars.HF_REPO_ID }}
         run: |
