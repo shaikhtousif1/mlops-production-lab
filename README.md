@@ -1,6 +1,6 @@
 # MLOps Production Lab
 
-A production-style MLOps learning lab covering reproducible model training, MLflow tracking and registry, model quality gates, model promotion, artifact packaging, GitHub Actions CI, Hugging Face model artifacts, GHCR, Kubernetes, and Flux GitOps.
+A production-style MLOps learning lab covering reproducible model training, MLflow tracking and registry, model quality gates, model promotion, durable artifact storage, GitHub Actions CI, Hugging Face model releases, GHCR, Kubernetes, and Flux GitOps.
 
 ## Current architecture
 
@@ -10,6 +10,8 @@ Dataset
 Training + CV
   ↓
 MLflow tracking
+  ├── Supabase PostgreSQL (tracking / registry metadata)
+  └── Supabase Storage via S3 API (MLflow artifacts)
   ↓
 Quality gate / model selection
   ↓
@@ -35,8 +37,9 @@ Kubernetes
 The project intentionally separates these concerns:
 
 ```text
-MLflow       = model tracking / registry / promotion
-HF           = learning-lab model artifact storage
+MLflow       = model tracking / registry / promotion / artifact metadata
+Supabase     = persistent PostgreSQL backend + S3-compatible MLflow artifact storage
+HF           = learning-lab persistent model release artifact
 Docker/GHCR  = application runtime artifact
 Git          = Kubernetes desired state
 Flux         = GitOps reconciliation
@@ -201,7 +204,7 @@ The PAT is used during setup but must never be committed to Git.
 
 ## Local development
 
-The project supports the VS Code Dev Container and local Docker Compose MLflow service.
+The project supports the VS Code Dev Container and local experimentation.
 
 Typical local workflow:
 
@@ -213,6 +216,35 @@ python src/promote_model.py
 ```
 
 For experimentation, `C` is configurable. The current CI candidate is intentionally configured separately in the GitHub Actions workflow.
+
+## Persistent MLflow backend and artifacts
+
+The learning lab now uses Supabase so MLflow state survives across CI runs without requiring an AWS account.
+
+```text
+MLflow tracking / registry metadata
+        ↓
+Supabase PostgreSQL
+
+MLflow model artifacts
+        ↓
+Supabase Storage (S3-compatible API)
+```
+
+The GitHub Actions workflow receives the connection details through GitHub Secrets/Variables. No database password or storage access key is stored in the repository.
+
+The configured CI environment uses:
+
+```text
+MLFLOW_TRACKING_URI   → Supabase PostgreSQL
+MLFLOW_S3_ENDPOINT_URL → Supabase S3 endpoint
+AWS_DEFAULT_REGION     → Supabase S3 region
+AWS_ACCESS_KEY_ID      → GitHub Secret
+AWS_SECRET_ACCESS_KEY  → GitHub Secret
+SUPABASE_STORAGE_BUCKET → GitHub Variable
+```
+
+This means MLflow experiments, runs, registered models, aliases, and artifact metadata can persist between independent GitHub Actions jobs. The S3-compatible storage is the MLflow artifact layer; Hugging Face remains the separate persistent release artifact used by this learning lab.
 
 ## Model lifecycle
 
@@ -246,13 +278,13 @@ releases/2/
   model_metadata.json
 ```
 
-`model_metadata.json` records both the persistent release version and the CI-local MLflow model version. The CI MLflow database is intentionally ephemeral, so MLflow model version numbers restart across fresh CI jobs; the Hugging Face release number is the persistent artifact version.
+`model_metadata.json` records both the persistent release version and the MLflow model version. With the persistent Supabase MLflow backend, MLflow registry versions now persist across CI runs as well.
 
 ### Important artifact-version distinction
 
 ```text
 MLflow version
-    = registry version inside the MLflow environment
+    = model version inside the persistent MLflow registry
 
 Model release version
     = persistent artifact release stored in Hugging Face
@@ -273,6 +305,8 @@ Push to main
 Validate Python
    ↓
 Validate dataset
+   ↓
+Configure persistent MLflow backend/artifact store
    ↓
 Train candidate
    ↓
@@ -318,7 +352,7 @@ Model registry
  ↓
 Promotion
  ↓
-Artifact storage
+Durable artifact storage
 ```
 
 and:
@@ -341,7 +375,7 @@ Flux
 Kubernetes
 ```
 
-For the lab, Hugging Face is used instead of S3 to avoid unnecessary cloud cost. In a production AWS design, the artifact layer could use S3 with IAM, encryption, lifecycle policies, and durable versioned objects.
+For this lab, Supabase provides a low-cost persistent PostgreSQL + S3-compatible artifact layer. In a production AWS design, the equivalent artifact layer could use S3 with IAM, encryption, lifecycle policies, and durable versioned objects.
 
 ## Rollback learning plan
 
@@ -374,12 +408,12 @@ This will teach the distinction between **model rollback** and **application rol
 
 ## Next learning milestones
 
-1. Verify persistent Hugging Face `releases/2/` after the corrected release-discovery code.
-2. Validate model lineage from CI → HF → Docker → Git → Flux → Kubernetes.
-3. Split model CI/CD and application CI/CD conceptually and then implement the separation.
-4. Perform a model rollback.
-5. Perform a GitOps/application rollback.
-6. Add observability and model/data drift.
-7. Introduce a production-style durable artifact store concept using S3/Azure Blob/GCS without unnecessary cloud spend.
-8. Extend the platform toward LLMOps: prompt/version management, evaluation, RAG, vector storage, LLM observability, cost tracking, and guardrails.
-
+1. Run the updated CI end-to-end and verify MLflow artifacts are written to Supabase Storage.
+2. Verify MLflow runs and registered model versions persist across separate CI runs.
+3. Verify the Hugging Face release remains a separate immutable model release artifact.
+4. Validate model lineage from CI → MLflow → HF → Docker → Git → Flux → Kubernetes.
+5. Split Model CI/CD and Application CI/CD conceptually and then implement the separation.
+6. Perform a model rollback.
+7. Perform a GitOps/application rollback.
+8. Add observability and model/data drift.
+9. Extend the platform toward LLMOps: prompt/version management, evaluation, RAG, vector storage, LLM observability, cost tracking, and guardrails.
