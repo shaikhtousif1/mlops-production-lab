@@ -2,6 +2,7 @@ import os
 import sys
 
 import boto3
+from botocore.config import Config
 import mlflow
 from botocore.exceptions import ClientError
 from mlflow import MlflowClient
@@ -25,26 +26,23 @@ def main() -> None:
 
     mlflow.set_tracking_uri(tracking_uri)
 
-    # Supabase Storage exposes an S3-compatible API. Create the bucket once if
-    # it does not already exist, so CI remains self-contained after secrets are set.
+    # Supabase Storage exposes an S3-compatible API. The bucket itself should
+    # be created in the Supabase dashboard; CI only verifies that it is usable.
     s3 = boto3.client(
         "s3",
         endpoint_url=endpoint,
         region_name=region,
         aws_access_key_id=required("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=required("AWS_SECRET_ACCESS_KEY"),
+        config=Config(s3={"addressing_style": "path"}),
     )
 
     try:
         s3.head_bucket(Bucket=bucket)
-        print(f"Storage bucket already exists: {bucket}")
+        print(f"Supabase Storage bucket verified: {bucket}")
     except ClientError as exc:
-        error_code = exc.response.get("Error", {}).get("Code", "")
-        if error_code in {"404", "NoSuchBucket", "NotFound"}:
-            print(f"Creating Supabase Storage bucket: {bucket}")
-            s3.create_bucket(Bucket=bucket)
-        else:
-            raise
+        print(f"Unable to access Supabase Storage bucket: {bucket}")
+        raise exc
 
     client = MlflowClient(tracking_uri=tracking_uri)
     experiment = client.get_experiment_by_name(experiment_name)
