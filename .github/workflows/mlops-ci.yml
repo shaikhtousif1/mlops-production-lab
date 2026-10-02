@@ -9,11 +9,11 @@ on:
       - main
 
 jobs:
-  validate-and-build:
+  validate-train-release:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write
+      contents: read
       packages: write
 
     steps:
@@ -73,7 +73,7 @@ jobs:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_DATABASE_URI }}
           MLFLOW_EXPERIMENT_NAME: customer-churn-ci
           MLFLOW_S3_ENDPOINT_URL: ${{ vars.MLFLOW_S3_ENDPOINT_URL }}
-          AWS_DEFAULT_REGION: ${{ vars.MLFLOW_S3_REGION }}
+          AWS_DEFAULT_REGION: ${{ vars.MLFOW_S3_REGION }}
           AWS_ACCESS_KEY_ID: ${{ secrets.SUPABASE_S3_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SUPABASE_S3_SECRET_ACCESS_KEY }}
         run: |
@@ -112,26 +112,14 @@ jobs:
         run: |
           pytest -q
 
-      - name: Prepare Kubernetes manifest
+      - name: Upload release metadata for CD
         if: github.event_name == 'push'
-        run: |
-          MODEL_VERSION=$(python -c "import json; print(json.load(open('model_metadata.json'))['model_release_version'])")
-          MODEL_RUN_ID=$(python -c "import json; print(json.load(open('model_metadata.json'))['run_id'])")
-          DATASET_VERSION=$(python -c "import json; print(json.load(open('model_metadata.json'))['dataset_version'])")
-
-          sed -i "s|ghcr.io/${{ github.repository_owner }}/customer-churn-api:.*|ghcr.io/${{ github.repository_owner }}/customer-churn-api:${{ github.sha }}|" k8s/deployment.yaml
-          sed -i "s|mlops/model-version:.*|mlops/model-version: \"${MODEL_VERSION}\"|" k8s/deployment.yaml
-          sed -i "s|mlops/run-id:.*|mlops/run-id: \"${MODEL_RUN_ID}\"|" k8s/deployment.yaml
-          sed -i "s|mlops/dataset-version:.*|mlops/dataset-version: \"${DATASET_VERSION}\"|" k8s/deployment.yaml
-
-          echo "Deployment lineage:"
-          grep 'mlops/' k8s/deployment.yaml
-
-      - name: Validate Kubernetes manifest
-        if: github.event_name == 'push'
-        run: |
-          grep -q "ghcr.io/${{ github.repository_owner }}/customer-churn-api:${{ github.sha }}" k8s/deployment.yaml
-          ! grep -qE 'IMAGE_TAG|MODEL_VERSION|MODEL_RUN_ID|DATASET_VERSION' k8s/deployment.yaml
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: model_metadata.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Log in to GHCR
         if: github.event_name == 'push'
@@ -150,16 +138,3 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/customer-churn-api:${{ github.sha }}
             ghcr.io/${{ github.repository_owner }}/customer-churn-api:latest
-
-      - name: Commit Kubernetes manifest
-        if: github.event_name == 'push'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add k8s/deployment.yaml
-          if git diff --cached --quiet; then
-            echo "No Kubernetes manifest changes to commit."
-          else
-            git commit -m "Update image and model lineage to ${{ github.sha }} [skip ci]"
-            git push
-          fi
